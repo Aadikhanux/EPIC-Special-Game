@@ -1,110 +1,349 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>EPIC Special Puzzle</title>
-<link rel="stylesheet" href="css/styles.css" />
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EPIC Special Photobooth Puzzle</title>
+  
+  <!-- Premium Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Outfit:wght@400;500;600;700;800;900&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  
+  <link rel="stylesheet" href="css/styles.css" />
 </head>
 <body>
 
 <div id="app">
 
-  <div id="stage">
+  <!-- Main Camera & Puzzle Viewport -->
+  <main id="stage">
     <video id="webcam" playsinline autoplay muted></video>
     <canvas id="sceneCanvas"></canvas>
+    <canvas id="fxCanvas"></canvas>
 
-    <div class="hud-top">
-      <div class="brand">EPIC SPECIAL PUZZLE</div>
+    <!-- Top HUD Bar -->
+    <header class="hud-top">
+      <div class="brand-group">
+        <div class="brand-badge">
+          <svg class="brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+            <circle cx="12" cy="13" r="4"></circle>
+          </svg>
+          <span class="brand-text">EPIC SPECIAL</span>
+        </div>
+        <span class="brand-tag">PHOTOBOOTH PUZZLE</span>
+      </div>
+
+      <!-- Turn Indicator -->
       <div id="turnIndicator" class="turn-indicator hidden">
-        <span id="turnText">Player 1</span>
+        <div class="turn-avatar" id="turnAvatar">P1</div>
+        <div class="turn-info">
+          <span class="turn-label">CURRENT TURN</span>
+          <span id="turnText" class="turn-name">Player 1</span>
+        </div>
       </div>
-      <div class="status-pill">
-        <span id="statusDot" class="status-dot"></span>
-        <span id="statusText">starting camera…</span>
-      </div>
-    </div>
 
+      <!-- Live Tracking Status -->
+      <div class="hud-center-status">
+        <div class="status-pill" id="statusPill">
+          <span id="statusDot" class="status-dot"></span>
+          <span id="statusText">starting camera…</span>
+        </div>
+      </div>
+
+      <!-- Quick Action Controls -->
+      <div class="hud-actions">
+        <button type="button" id="retakeBtn" class="hud-btn retake-btn" title="Recapture / Retake Photo Frame (Hotkey: R)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M1 4v6h6"></path>
+            <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
+          </svg>
+          <span>RECAPTURE CROP</span>
+        </button>
+
+        <button type="button" id="helpBtn" class="hud-btn hud-btn--icon" title="How to Play / Gestures Guide">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"></circle>
+            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+            <line x1="12" y1="17" x2="12.01" y2="17"></line>
+          </svg>
+        </button>
+
+        <button type="button" id="soundToggleBtn" class="hud-btn hud-btn--icon" title="Toggle Sound">
+          <svg id="soundIconOn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+            <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+          </svg>
+          <svg id="soundIconOff" class="hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+            <line x1="23" y1="9" x2="17" y2="15"></line>
+            <line x1="17" y1="9" x2="23" y2="15"></line>
+          </svg>
+        </button>
+
+        <button type="button" id="fullscreenBtn" class="hud-btn hud-btn--icon" title="Toggle Fullscreen">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Puzzle Stats Badge (Timer & Placed pieces) -->
     <div id="progressBadge" class="progress-badge">
-      <span id="progressText">0 / 9 pieces placed</span>
+      <div class="progress-stat">
+        <span class="stat-label">PIECES</span>
+        <span id="progressText" class="stat-val">0 / 9</span>
+      </div>
+      <div class="stat-divider"></div>
+      <div class="progress-stat">
+        <span class="stat-label">TIME</span>
+        <span id="puzzleTimerText" class="stat-val font-mono">00:00.0</span>
+      </div>
     </div>
 
+    <!-- Recording Indicator -->
     <div id="recIndicator" class="rec-indicator hidden">
-      <span class="rec-dot"></span> REC
+      <span class="rec-dot"></span>
+      <span class="rec-label">REC SOLVE</span>
     </div>
 
-    <button type="button" id="retakeBtn" class="retake-btn hidden">RETAKE CROP</button>
+    <!-- Bottom Gesture & Tip HUD -->
+    <div class="hud-bottom">
+      <div class="gesture-pill" id="gesturePill">
+        <div class="gesture-icon" id="gestureIcon">✌️</div>
+        <div class="gesture-desc">
+          <span class="gesture-title" id="gestureTitle">FRAME & PINCH</span>
+          <span class="gesture-hint" id="gestureHint">Use index fingers to frame & pinch both hands</span>
+        </div>
+      </div>
 
+      <!-- Quick Save Action when Solved -->
+      <button type="button" id="saveSolveBtn" class="save-solve-btn hidden">
+        <span class="save-btn-fist">✊</span>
+        <span>SAVE & NEXT PLAYER</span>
+      </button>
+    </div>
+
+    <!-- Loading Overlay -->
     <div id="loadingOverlay">
-      <div class="loader-text" id="loaderText">loading HandLandmarker model…</div>
-      <div class="loader-bar"></div>
-      <button type="button" id="loaderRetry" class="loader-retry hidden">retry</button>
+      <div class="loader-card">
+        <div class="loader-spinner"></div>
+        <div class="loader-title">INITIALIZING PHOTOBOOTH</div>
+        <div class="loader-text" id="loaderText">Loading HandLandmarker neural model…</div>
+        <div class="loader-bar-wrap">
+          <div class="loader-bar"></div>
+        </div>
+        <button type="button" id="loaderRetry" class="loader-retry hidden">RETRY CONNECTION</button>
+      </div>
     </div>
 
+    <!-- Error Banner & Flash -->
     <div id="errorBanner"></div>
     <div id="flashOverlay"></div>
-  </div>
+  </main>
 
+  <!-- Photo Strip Sidebar (Photobooth Gallery) -->
   <aside id="gallery">
     <div class="gallery-head">
-      <span class="gallery-title">Strip</span>
-      <span class="gallery-count" id="galleryCount">0 / 3</span>
+      <div class="gallery-head-left">
+        <span class="gallery-title">PHOTO STRIP</span>
+        <span class="gallery-sub">INSTANT FILM</span>
+      </div>
+      <span class="gallery-count-badge" id="galleryCount">0 / 3</span>
     </div>
 
     <div class="strip-complete-msg" id="stripCompleteMsg">
-      strip complete — download or reset to continue
-    </div>
-
-    <div id="galleryStrip" class="gallery-strip">
-      <div class="gallery-empty" id="galleryEmpty">
-        Your completed puzzles<br/>will appear here.
+      <div class="complete-star">✨</div>
+      <div class="complete-text">
+        <strong>STRIP COMPLETE!</strong>
+        <span>All 3 photos captured & solved</span>
       </div>
     </div>
 
+    <!-- Gallery Strip Container -->
+    <div id="galleryStrip" class="gallery-strip">
+      <div class="gallery-empty" id="galleryEmpty">
+        <div class="empty-icon">📷</div>
+        <div class="empty-title">No Photos Yet</div>
+        <div class="empty-desc">Complete each player's puzzle to print your photobooth strip.</div>
+      </div>
+    </div>
+
+    <!-- Gallery Action Controls -->
     <div class="gallery-actions">
-      <button type="button" id="downloadStripBtn" class="gallery-action-btn" disabled>download strip</button>
-      <button type="button" id="downloadVideoBtn" class="gallery-action-btn" disabled>download video</button>
-      <button type="button" id="resetAllBtn" class="gallery-action-btn gallery-action-btn--danger">reset all</button>
+      <button type="button" id="downloadStripBtn" class="gallery-action-btn gallery-action-btn--primary" disabled>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+          <polyline points="7 10 12 15 17 10"></polyline>
+          <line x1="12" y1="15" x2="12" y2="3"></line>
+        </svg>
+        <span>DOWNLOAD STRIP</span>
+      </button>
+
+      <button type="button" id="downloadVideoBtn" class="gallery-action-btn gallery-action-btn--secondary" disabled>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="23 7 16 12 23 17 23 7"></polygon>
+          <rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
+        </svg>
+        <span>DOWNLOAD VIDEO</span>
+      </button>
+
+      <button type="button" id="resetAllBtn" class="gallery-action-btn gallery-action-btn--danger">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="3 6 5 6 21 6"></polyline>
+          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+        </svg>
+        <span>NEW GAME / RESET</span>
+      </button>
     </div>
   </aside>
 
 </div>
 
-<div class="copyright">© 2026 aiwithunnati — all rights reserved</div>
+<footer class="copyright">
+  <span>© 2026 EPIC SPECIAL PHOTOBOOTH</span>
+  <span class="sep">•</span>
+  <span>Hand Tracking + Web Audio + Canvas</span>
+</footer>
 
+<!-- Full Photo Strip Preview Modal -->
 <div id="stripModal" class="strip-modal hidden">
   <div class="strip-modal-inner">
-    <div class="strip-modal-title">YOUR PHOTO STRIP</div>
-    <canvas id="stripPreviewCanvas"></canvas>
+    <div class="modal-header">
+      <div class="strip-modal-title">✨ YOUR COMPLETED PHOTO STRIP</div>
+      <button id="stripModalCloseIcon" class="modal-close-btn">&times;</button>
+    </div>
+    <div class="strip-canvas-wrapper">
+      <canvas id="stripPreviewCanvas"></canvas>
+    </div>
     <div class="strip-modal-actions">
-      <button id="stripModalDownload" class="strip-modal-btn">download</button>
-      <button id="stripModalClose" class="strip-modal-btn strip-modal-btn--ghost">close</button>
+      <button id="stripModalDownload" class="modal-btn modal-btn--primary">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+          <polyline points="7 10 12 15 17 10"></polyline>
+          <line x1="12" y1="15" x2="12" y2="3"></line>
+        </svg>
+        <span>DOWNLOAD HIGH-RES STRIP</span>
+      </button>
+      <button id="stripModalClose" class="modal-btn modal-btn--ghost">CLOSE</button>
     </div>
   </div>
 </div>
 
+<!-- Player Name Setup Modal -->
 <div id="nameEntryModal" class="modal-overlay">
   <div class="modal-card name-entry-card">
-    <div class="modal-title">EPIC SPECIAL PUZZLE</div>
-    <div class="modal-subtitle">Enter 3 player names to begin</div>
+    <div class="modal-badge">3-PLAYER CHALLENGE</div>
+    <h2 class="modal-title">EPIC SPECIAL PUZZLE</h2>
+    <p class="modal-subtitle">Enter player names to compete for the fastest solve time</p>
+    
     <div class="name-inputs">
-      <input type="text" id="playerName1" class="name-input" placeholder="Player 1" maxlength="16" />
-      <input type="text" id="playerName2" class="name-input" placeholder="Player 2" maxlength="16" />
-      <input type="text" id="playerName3" class="name-input" placeholder="Player 3" maxlength="16" />
+      <div class="name-input-group">
+        <div class="player-chip p1">P1</div>
+        <input type="text" id="playerName1" class="name-input" placeholder="Player 1" value="Player 1" maxlength="16" />
+      </div>
+      <div class="name-input-group">
+        <div class="player-chip p2">P2</div>
+        <input type="text" id="playerName2" class="name-input" placeholder="Player 2" value="Player 2" maxlength="16" />
+      </div>
+      <div class="name-input-group">
+        <div class="player-chip p3">P3</div>
+        <input type="text" id="playerName3" class="name-input" placeholder="Player 3" value="Player 3" maxlength="16" />
+      </div>
     </div>
-    <button type="button" id="startGameBtn" class="modal-btn">START GAME</button>
+
+    <div class="game-instructions-preview">
+      <div class="instruction-item">
+        <span class="inst-icon">✌️</span>
+        <span class="inst-text"><strong>Frame & Pinch</strong> to snap photo</span>
+      </div>
+      <div class="instruction-item">
+        <span class="inst-icon">🤏</span>
+        <span class="inst-text"><strong>Pinch or Drag</strong> pieces into place</span>
+      </div>
+      <div class="instruction-item">
+        <span class="inst-icon">✊</span>
+        <span class="inst-text"><strong>Make Fist</strong> to shatter & save</span>
+      </div>
+    </div>
+
+    <button type="button" id="startGameBtn" class="modal-btn modal-btn--primary start-btn">
+      <span>START GAME</span>
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="5" y1="12" x2="19" y2="12"></line>
+        <polyline points="12 5 19 12 12 19"></polyline>
+      </svg>
+    </button>
   </div>
 </div>
 
+<!-- Leaderboard Modal -->
 <div id="leaderboardModal" class="modal-overlay hidden">
   <div class="modal-card leaderboard-card">
-    <div class="modal-title">LEADERBOARD</div>
-    <div class="leaderboard-subtitle" id="leaderboardSubtitle">Final Results</div>
-    <div class="leaderboard-entries" id="leaderboardEntries"></div>
+    <div class="winner-trophy">🏆</div>
+    <div class="modal-badge">TOURNAMENT RESULTS</div>
+    <h2 class="modal-title">FINAL LEADERBOARD</h2>
+    <div class="leaderboard-subtitle" id="leaderboardSubtitle">All 3 players completed!</div>
+    
     <div class="leaderboard-winner" id="leaderboardWinner"></div>
+    <div class="leaderboard-entries" id="leaderboardEntries"></div>
+
     <div class="modal-actions">
-      <button type="button" id="playAgainBtn" class="modal-btn">PLAY AGAIN</button>
+      <button type="button" id="viewStripBtn" class="modal-btn modal-btn--secondary">VIEW PHOTO STRIP</button>
+      <button type="button" id="playAgainBtn" class="modal-btn modal-btn--primary">PLAY AGAIN</button>
     </div>
+  </div>
+</div>
+
+<!-- How to Play / Guide Modal -->
+<div id="helpModal" class="modal-overlay hidden">
+  <div class="modal-card help-card">
+    <div class="modal-header">
+      <h2 class="modal-title">HOW TO PLAY</h2>
+      <button id="helpModalCloseIcon" class="modal-close-btn">&times;</button>
+    </div>
+    
+    <div class="help-steps">
+      <div class="help-step">
+        <div class="step-num">1</div>
+        <div class="step-body">
+          <h4>Frame Your Shot</h4>
+          <p>Raise both hands with index fingers extended. The box between your fingers creates your camera frame.</p>
+        </div>
+      </div>
+      <div class="help-step">
+        <div class="step-num">2</div>
+        <div class="step-body">
+          <h4>Pinch to Lock & Snap</h4>
+          <p>Pinch index & thumb on both hands simultaneously to start the 3-second countdown and flash!</p>
+        </div>
+      </div>
+      <div class="help-step">
+        <div class="step-num">3</div>
+        <div class="step-body">
+          <h4>Solve the 3×3 Puzzle</h4>
+          <p>Pinch with one hand (or click & drag with mouse/touch) to move pieces. Drop near the slot to snap in.</p>
+        </div>
+      </div>
+      <div class="help-step">
+        <div class="step-num">4</div>
+        <div class="step-body">
+          <h4>Make a Fist to Save</h4>
+          <p>Hold a closed fist for 1s to shatter the puzzle into your color polaroid strip, or click "Save & Continue".</p>
+        </div>
+      </div>
+      <div class="help-step">
+        <div class="step-num">💡</div>
+        <div class="step-body">
+          <h4>Recapture Crop</h4>
+          <p>Want to re-take the photo? Click the <strong>RECAPTURE CROP</strong> button anytime or press the <strong>R</strong> key.</p>
+        </div>
+      </div>
+    </div>
+
+    <button type="button" id="helpModalClose" class="modal-btn modal-btn--primary">GOT IT, LET'S PLAY</button>
   </div>
 </div>
 

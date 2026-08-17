@@ -3,6 +3,7 @@ import {
   HandLandmarker,
 } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
 
+// ── Landmark constants ────────────────────────────────────────────────────────
 const LM = {
   WRIST: 0,
   THUMB_TIP: 4,
@@ -21,9 +22,9 @@ const FRAME_PADDING = 28;
 const FREEZE_HOLD_MS = 250;
 const COUNTDOWN_SECONDS = 3;
 const FIST_HOLD_FRAMES = 12;
-const SNAP_DISTANCE_RATIO = 0.75;
 const GRID = 3;
 const LOAD_TIMEOUT_MS = 20000;
+const SWAP_ANIM_MS = 180;
 
 const PHOTOBOOTH_CONTRAST_ALPHA = 1.3;
 const PHOTOBOOTH_BRIGHTNESS_BETA = 10;
@@ -38,9 +39,12 @@ const HAND_CONNECTIONS = [
   [0, 17],
 ];
 
+// ── DOM Elements ──────────────────────────────────────────────────────────────
 const videoEl = document.getElementById("webcam");
 const canvas = document.getElementById("sceneCanvas");
 const ctx = canvas.getContext("2d", { willReadFrequently: true });
+const fxCanvas = document.getElementById("fxCanvas");
+const fxCtx = fxCanvas.getContext("2d");
 
 const statusDot = document.getElementById("statusDot");
 const statusText = document.getElementById("statusText");
@@ -50,6 +54,16 @@ const loaderRetry = document.getElementById("loaderRetry");
 const errorBanner = document.getElementById("errorBanner");
 const progressBadge = document.getElementById("progressBadge");
 const progressText = document.getElementById("progressText");
+const puzzleTimerText = document.getElementById("puzzleTimerText");
+
+const turnIndicator = document.getElementById("turnIndicator");
+const turnAvatar = document.getElementById("turnAvatar");
+const turnText = document.getElementById("turnText");
+
+const gestureIcon = document.getElementById("gestureIcon");
+const gestureTitle = document.getElementById("gestureTitle");
+const gestureHint = document.getElementById("gestureHint");
+const saveSolveBtn = document.getElementById("saveSolveBtn");
 
 const galleryStrip = document.getElementById("galleryStrip");
 const galleryEmpty = document.getElementById("galleryEmpty");
@@ -60,17 +74,44 @@ const resetAllBtn = document.getElementById("resetAllBtn");
 const stripCompleteMsg = document.getElementById("stripCompleteMsg");
 const recIndicator = document.getElementById("recIndicator");
 const flashOverlay = document.getElementById("flashOverlay");
+
+const retakeBtn = document.getElementById("retakeBtn");
+const soundToggleBtn = document.getElementById("soundToggleBtn");
+const soundIconOn = document.getElementById("soundIconOn");
+const soundIconOff = document.getElementById("soundIconOff");
+const fullscreenBtn = document.getElementById("fullscreenBtn");
+const helpBtn = document.getElementById("helpBtn");
+
 const stripModal = document.getElementById("stripModal");
 const stripPreviewCanvas = document.getElementById("stripPreviewCanvas");
 const stripModalDownload = document.getElementById("stripModalDownload");
 const stripModalClose = document.getElementById("stripModalClose");
+const stripModalCloseIcon = document.getElementById("stripModalCloseIcon");
+
+const nameEntryModal = document.getElementById("nameEntryModal");
+const startGameBtn = document.getElementById("startGameBtn");
+
+const leaderboardModal = document.getElementById("leaderboardModal");
+const leaderboardEntries = document.getElementById("leaderboardEntries");
+const leaderboardWinner = document.getElementById("leaderboardWinner");
+const leaderboardSubtitle = document.getElementById("leaderboardSubtitle");
+const playAgainBtn = document.getElementById("playAgainBtn");
+const viewStripBtn = document.getElementById("viewStripBtn");
+
+const helpModal = document.getElementById("helpModal");
+const helpModalClose = document.getElementById("helpModalClose");
+const helpModalCloseIcon = document.getElementById("helpModalCloseIcon");
 
 // ── Audio engine ──────────────────────────────────────────────────────────────
+let soundMuted = false;
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
-function resumeAudio() { if (audioCtx.state === "suspended") audioCtx.resume(); }
+function resumeAudio() {
+  if (audioCtx.state === "suspended") audioCtx.resume();
+}
 
 function playTone({ freq = 440, type = "sine", gain = 0.18, attack = 0.005, decay = 0.12, duration = 0.15 } = {}) {
+  if (soundMuted) return;
   resumeAudio();
   const now = audioCtx.currentTime;
   const osc = audioCtx.createOscillator();
@@ -87,9 +128,10 @@ function playTone({ freq = 440, type = "sine", gain = 0.18, attack = 0.005, deca
 }
 
 function playNoise({ gain = 0.25, duration = 0.18, freq = 800 } = {}) {
+  if (soundMuted) return;
   resumeAudio();
   const now = audioCtx.currentTime;
-  const bufSize = audioCtx.sampleRate * duration;
+  const bufSize = Math.floor(audioCtx.sampleRate * duration);
   const buf = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
   const data = buf.getChannelData(0);
   for (let i = 0; i < bufSize; i++) data[i] = Math.random() * 2 - 1;
@@ -153,15 +195,60 @@ function triggerFlash() {
   });
 }
 
-function applyVignette(canvas) {
-  const ctx2 = canvas.getContext("2d");
-  const w = canvas.width;
-  const h = canvas.height;
-  const grad = ctx2.createRadialGradient(w/2, h/2, Math.min(w,h)*0.25, w/2, h/2, Math.max(w,h)*0.75);
+function applyVignette(canvasEl) {
+  const ctx2 = canvasEl.getContext("2d");
+  const w = canvasEl.width;
+  const h = canvasEl.height;
+  const grad = ctx2.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.25, w / 2, h / 2, Math.max(w, h) * 0.75);
   grad.addColorStop(0, "rgba(0,0,0,0)");
   grad.addColorStop(1, "rgba(0,0,0,0.45)");
   ctx2.fillStyle = grad;
   ctx2.fillRect(0, 0, w, h);
+}
+
+// ── Confetti Particle FX ──────────────────────────────────────────────────────
+const confettiParticles = [];
+function spawnConfetti(count = 50) {
+  const colors = ["#f5c518", "#00e5ff", "#10b981", "#ff4757", "#ffffff", "#ffd700"];
+  for (let i = 0; i < count; i++) {
+    confettiParticles.push({
+      x: fxCanvas.width / 2 + (Math.random() - 0.5) * 300,
+      y: fxCanvas.height / 2 - 100,
+      w: Math.random() * 8 + 4,
+      h: Math.random() * 8 + 4,
+      vx: (Math.random() - 0.5) * 16,
+      vy: Math.random() * -12 - 4,
+      gravity: 0.4,
+      color: colors[Math.floor(Math.random() * colors.length)],
+      rotation: Math.random() * 360,
+      rotSpeed: (Math.random() - 0.5) * 10,
+      life: 1,
+      decay: Math.random() * 0.015 + 0.01,
+    });
+  }
+}
+
+function updateAndDrawConfetti() {
+  fxCtx.clearRect(0, 0, fxCanvas.width, fxCanvas.height);
+  for (let i = confettiParticles.length - 1; i >= 0; i--) {
+    const p = confettiParticles[i];
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vy += p.gravity;
+    p.rotation += p.rotSpeed;
+    p.life -= p.decay;
+    if (p.life <= 0 || p.y > fxCanvas.height) {
+      confettiParticles.splice(i, 1);
+      continue;
+    }
+    fxCtx.save();
+    fxCtx.globalAlpha = Math.max(0, p.life);
+    fxCtx.translate(p.x, p.y);
+    fxCtx.rotate((p.rotation * Math.PI) / 180);
+    fxCtx.fillStyle = p.color;
+    fxCtx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+    fxCtx.restore();
+  }
 }
 
 // ── Video recorder ────────────────────────────────────────────────────────────
@@ -181,7 +268,9 @@ function startRecording() {
       ? "video/webm;codecs=vp9"
       : "video/webm";
     recorder.instance = new MediaRecorder(stream, { mimeType });
-    recorder.instance.ondataavailable = (e) => { if (e.data.size > 0) recorder.chunks.push(e.data); };
+    recorder.instance.ondataavailable = (e) => {
+      if (e.data.size > 0) recorder.chunks.push(e.data);
+    };
     recorder.instance.onstop = () => {
       recorder.blob = new Blob(recorder.chunks, { type: "video/webm" });
       downloadVideoBtn.disabled = false;
@@ -190,13 +279,15 @@ function startRecording() {
     recorder.instance.start();
     recIndicator.classList.remove("hidden");
   } catch (err) {
-    console.warn("[EPIC Special Puzzle] MediaRecorder failed:", err);
+    console.warn("[EPIC Special Puzzle] MediaRecorder start warning:", err);
   }
 }
 
 function stopRecording() {
   if (recorder.instance && recorder.instance.state !== "inactive") {
-    recorder.instance.stop();
+    try {
+      recorder.instance.stop();
+    } catch (e) {}
   }
 }
 
@@ -213,8 +304,8 @@ function downloadVideo() {
 }
 
 // ── App state ─────────────────────────────────────────────────────────────────
-let appState = "tracking";
-let gamePhase = "names";
+let appState = "tracking"; // 'tracking' | 'countdown' | 'puzzle' | 'shattering'
+let gamePhase = "names"; // 'names' | 'playing' | 'results'
 
 const players = [
   { name: "Player 1", time: null, photo: null },
@@ -222,17 +313,6 @@ const players = [
   { name: "Player 3", time: null, photo: null },
 ];
 let currentPlayerIndex = 0;
-
-const nameEntryModal = document.getElementById("nameEntryModal");
-const startGameBtn = document.getElementById("startGameBtn");
-const turnIndicator = document.getElementById("turnIndicator");
-const turnText = document.getElementById("turnText");
-const retakeBtn = document.getElementById("retakeBtn");
-const leaderboardModal = document.getElementById("leaderboardModal");
-const leaderboardEntries = document.getElementById("leaderboardEntries");
-const leaderboardWinner = document.getElementById("leaderboardWinner");
-const leaderboardSubtitle = document.getElementById("leaderboardSubtitle");
-const playAgainBtn = document.getElementById("playAgainBtn");
 
 const puzzle = {
   boardBox: null,
@@ -242,6 +322,7 @@ const puzzle = {
   tileH: 0,
   timerStartedAt: 0,
   timerElapsed: 0,
+  fullPhotoboothCanvas: null,
 };
 
 const SHATTER_COLS = 6;
@@ -259,8 +340,13 @@ const galleryEntries = [];
 
 function addToGallery(snapshotCanvas) {
   if (galleryEntries.length >= STRIP_MAX_PHOTOS) return;
-  galleryEntries.push({ canvas: snapshotCanvas, time: Date.now() });
-  renderGalleryThumb(snapshotCanvas, galleryEntries.length);
+  galleryEntries.push({
+    canvas: snapshotCanvas,
+    time: Date.now(),
+    playerName: players[currentPlayerIndex]?.name || `Player ${currentPlayerIndex + 1}`,
+    playerTime: players[currentPlayerIndex]?.time || 0,
+  });
+  renderGalleryThumb(snapshotCanvas, galleryEntries.length, players[currentPlayerIndex]?.name);
   galleryCount.textContent = `${galleryEntries.length} / ${STRIP_MAX_PHOTOS}`;
   if (galleryEmpty) galleryEmpty.style.display = "none";
   if (galleryEntries.length >= STRIP_MAX_PHOTOS) showStripComplete();
@@ -274,7 +360,8 @@ function isStripFull() {
 function showStripComplete() {
   if (stripCompleteMsg) stripCompleteMsg.classList.add("visible");
   updateStripDownloadAvailability();
-  setTimeout(() => showStripModal(), 900);
+  spawnConfetti(120);
+  setTimeout(() => showStripModal(), 1000);
 }
 
 function hideStripComplete() {
@@ -286,28 +373,47 @@ function updateStripDownloadAvailability() {
   downloadStripBtn.disabled = galleryEntries.length === 0;
 }
 
-const STRIP_FILE_BORDER = 24;
-const STRIP_FILE_GAP = 16;
-const STRIP_FILE_BG = "#ffffff";
+const STRIP_FILE_BORDER = 28;
+const STRIP_FILE_GAP = 20;
 
 function buildStripCanvas() {
   if (galleryEntries.length === 0) return null;
-  const polaroids = galleryEntries.map((entry, i) => makePolaroid(entry.canvas, i + 1));
+  const polaroids = galleryEntries.map((entry, i) =>
+    makePolaroid(entry.canvas, i + 1, entry.playerName, entry.playerTime)
+  );
   const totalW = polaroids[0].width + STRIP_FILE_BORDER * 2;
-  const totalH = STRIP_FILE_BORDER * 2 +
+  const totalH =
+    STRIP_FILE_BORDER * 2 +
     polaroids.reduce((sum, p) => sum + p.height, 0) +
-    STRIP_FILE_GAP * (polaroids.length - 1);
+    STRIP_FILE_GAP * (polaroids.length - 1) +
+    40;
+
   const sc = document.createElement("canvas");
   sc.width = totalW;
   sc.height = totalH;
   const sCtx = sc.getContext("2d");
-  sCtx.fillStyle = "#f0ede6";
+
+  // Vintage cream photobooth card
+  sCtx.fillStyle = "#fcfaf6";
   sCtx.fillRect(0, 0, totalW, totalH);
+
+  // Subtle border outline
+  sCtx.strokeStyle = "#e2ded4";
+  sCtx.lineWidth = 2;
+  sCtx.strokeRect(4, 4, totalW - 8, totalH - 8);
+
   let cursorY = STRIP_FILE_BORDER;
   polaroids.forEach((p) => {
     sCtx.drawImage(p, STRIP_FILE_BORDER, cursorY);
     cursorY += p.height + STRIP_FILE_GAP;
   });
+
+  // Footer stamp
+  sCtx.fillStyle = "#9a9486";
+  sCtx.font = "bold 11px 'IBM Plex Mono', monospace";
+  sCtx.textAlign = "center";
+  sCtx.fillText("★ EPIC SPECIAL PHOTOBOOTH STRIP ★", totalW / 2, totalH - 18);
+
   return sc;
 }
 
@@ -319,7 +425,7 @@ function downloadPhotoStrip() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `epic_puzzle_strip_${Date.now()}.png`;
+    link.download = `epic_special_photostrip_${Date.now()}.png`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -341,7 +447,7 @@ function resetEverything() {
   galleryStrip.innerHTML = "";
   galleryCount.textContent = `0 / ${STRIP_MAX_PHOTOS}`;
   if (galleryEmpty) {
-    galleryEmpty.style.display = "block";
+    galleryEmpty.style.display = "flex";
     galleryStrip.appendChild(galleryEmpty);
   }
   hideStripComplete();
@@ -350,38 +456,65 @@ function resetEverything() {
   gamePhase = "names";
   currentPlayerIndex = 0;
   turnIndicator.classList.add("hidden");
-  players.forEach((p) => { p.time = null; p.photo = null; });
+  players.forEach((p) => {
+    p.time = null;
+    p.photo = null;
+  });
   hideLeaderboard();
   statusText.textContent = "enter player names to begin";
   nameEntryModal.classList.remove("hidden");
 }
 
-function makePolaroid(snapshotCanvas, index) {
-  const BORDER = 10;
-  const BOTTOM = 32;
-  const THUMB_W = 200;
+function makePolaroid(snapshotCanvas, index, playerName = "Player", solveTime = 0) {
+  const BORDER = 12;
+  const BOTTOM = 44;
+  const THUMB_W = 220;
   const scale = THUMB_W / snapshotCanvas.width;
   const imgH = Math.round(snapshotCanvas.height * scale);
+
   const pc = document.createElement("canvas");
   pc.width = THUMB_W + BORDER * 2;
   pc.height = imgH + BORDER + BOTTOM;
   const pCtx = pc.getContext("2d");
-  pCtx.fillStyle = "#fff";
+
+  // Polaroid white frame
+  pCtx.fillStyle = "#ffffff";
   pCtx.fillRect(0, 0, pc.width, pc.height);
+
+  // Polaroid stroke
+  pCtx.strokeStyle = "#e8e5dc";
+  pCtx.lineWidth = 1;
+  pCtx.strokeRect(0, 0, pc.width, pc.height);
+
+  // Photo
   pCtx.drawImage(snapshotCanvas, BORDER, BORDER, THUMB_W, imgH);
-  pCtx.fillStyle = "#888";
-  pCtx.font = "bold 9px 'IBM Plex Mono', monospace";
-  pCtx.textAlign = "center";
+
+  // Player Name & Solve Time Stamp
+  pCtx.fillStyle = "#1c1a16";
+  pCtx.font = "bold 11px 'Plus Jakarta Sans', sans-serif";
+  pCtx.textAlign = "left";
+  pCtx.fillText(`${playerName}`, BORDER + 2, imgH + BORDER + 18);
+
+  pCtx.fillStyle = "#f5c518";
+  pCtx.font = "bold 10px 'IBM Plex Mono', monospace";
+  pCtx.textAlign = "right";
+  pCtx.fillText(solveTime ? formatTime(solveTime) : `#${index}`, pc.width - BORDER - 2, imgH + BORDER + 18);
+
+  // Timestamp subtext
+  pCtx.fillStyle = "#8a857a";
+  pCtx.font = "9px 'IBM Plex Mono', monospace";
+  pCtx.textAlign = "left";
   const now = new Date();
-  const ts = `${String(now.getDate()).padStart(2,"0")}.${String(now.getMonth()+1).padStart(2,"0")}.${now.getFullYear()} — #${String(index).padStart(2,"0")}`;
-  pCtx.fillText(ts, pc.width / 2, imgH + BORDER + 20);
+  const ts = `${String(now.getDate()).padStart(2, "0")}.${String(now.getMonth() + 1).padStart(2, "0")}.${now.getFullYear()} PHOTO #${String(index).padStart(2, "0")}`;
+  pCtx.fillText(ts, BORDER + 2, imgH + BORDER + 32);
+
   return pc;
 }
 
-function renderGalleryThumb(snapshotCanvas, index) {
+function renderGalleryThumb(snapshotCanvas, index, playerName) {
   const print = document.createElement("div");
   print.className = "print";
-  const pc = makePolaroid(snapshotCanvas, index);
+  const pc = makePolaroid(snapshotCanvas, index, playerName, players[currentPlayerIndex]?.time);
   pc.style.width = "100%";
   print.appendChild(pc);
   galleryStrip.insertBefore(print, galleryStrip.firstChild);
@@ -398,6 +531,8 @@ function resetPuzzleOnly() {
   countdown.active = false;
   drag.activeHand = null;
   drag.piece = null;
+  pointerDrag.active = false;
+  pointerDrag.piece = null;
   shatter.active = false;
   shatter.fragments = [];
   shatter.pendingCanvas = null;
@@ -406,15 +541,19 @@ function resetPuzzleOnly() {
   lastSeenFrame.at = 0;
   lastCountdownN = -1;
   freezeGate.holding = false;
+  saveSolveBtn.classList.add("hidden");
   stopRecording();
   recIndicator.classList.add("hidden");
   updateProgressBadge();
+  updateGestureHUD();
 }
 
 function updateTurnIndicator() {
   if (gamePhase === "playing") {
     turnIndicator.classList.remove("hidden");
-    turnText.textContent = `${players[currentPlayerIndex].name}`;
+    const p = players[currentPlayerIndex];
+    turnText.textContent = p?.name || `Player ${currentPlayerIndex + 1}`;
+    turnAvatar.textContent = `P${currentPlayerIndex + 1}`;
   } else {
     turnIndicator.classList.add("hidden");
   }
@@ -429,9 +568,11 @@ function advanceToNextPlayer() {
     return;
   }
   updateTurnIndicator();
+  statusText.textContent = `${players[currentPlayerIndex].name} — frame your photo`;
 }
 
 function formatTime(seconds) {
+  if (!seconds || isNaN(seconds)) return "00:00.0";
   const mins = Math.floor(seconds / 60);
   const secs = Math.floor(seconds % 60);
   const ms = Math.floor((seconds * 10) % 10);
@@ -447,7 +588,7 @@ function showLeaderboard() {
     row.className = `leaderboard-row ${medals[i] || ""}`;
     const rank = document.createElement("span");
     rank.className = "leaderboard-rank";
-    rank.textContent = `#${i + 1}`;
+    rank.textContent = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `#${i + 1}`;
     const name = document.createElement("span");
     name.className = "leaderboard-name";
     name.textContent = p.name;
@@ -460,38 +601,69 @@ function showLeaderboard() {
     leaderboardEntries.appendChild(row);
   });
   const winner = sorted[0];
-  leaderboardSubtitle.textContent = `All ${players.length} players completed!`;
-  leaderboardWinner.textContent = winner && winner.time != null
-    ? `${winner.name} wins with ${formatTime(winner.time)}!`
-    : "No winner";
+  leaderboardSubtitle.textContent = `All ${players.length} players completed the challenge!`;
+  leaderboardWinner.textContent =
+    winner && winner.time != null
+      ? `👑 ${winner.name} won 1st Place with ${formatTime(winner.time)}!`
+      : "Challenge Finished";
   leaderboardModal.classList.remove("hidden");
+  spawnConfetti(100);
 }
 
 function hideLeaderboard() {
   leaderboardModal.classList.add("hidden");
 }
 
-function handleRetakeCrop() {
-  if (appState === "tracking" || appState === "countdown") {
-    resetPuzzleOnly();
-    lastSeenFrame.box = null;
-    lastSeenFrame.at = 0;
-    triggerFlash();
-    playTone({ freq: 660, type: "square", gain: 0.12, attack: 0.001, decay: 0.08, duration: 0.1 });
-    statusText.textContent = gamePhase === "playing" ? `${players[currentPlayerIndex]?.name || "Player"} — frame your photo again` : "frame your photo again";
-    retakeBtn.classList.remove("hidden");
+function updateGestureHUD() {
+  if (appState === "tracking") {
+    gestureIcon.textContent = "✌️";
+    gestureTitle.textContent = "FRAME & PINCH";
+    gestureHint.textContent = "Extend index fingers to frame & pinch both hands to snap";
+    saveSolveBtn.classList.add("hidden");
+  } else if (appState === "countdown") {
+    gestureIcon.textContent = "⏱️";
+    gestureTitle.textContent = "HOLD STILL";
+    gestureHint.textContent = "Capturing photo booth frame in 3 seconds…";
+    saveSolveBtn.classList.add("hidden");
+  } else if (appState === "puzzle") {
+    if (puzzle.solved) {
+      gestureIcon.textContent = "✊";
+      gestureTitle.textContent = "SOLVED! MAKE FIST TO SAVE";
+      gestureHint.textContent = "Hold a closed fist for 1s or click SAVE button";
+      saveSolveBtn.classList.remove("hidden");
+    } else {
+      gestureIcon.textContent = "🤏";
+      gestureTitle.textContent = "SOLVE PUZZLE";
+      gestureHint.textContent = "Pinch or drag pieces into correct slots";
+      saveSolveBtn.classList.add("hidden");
+    }
   }
 }
 
+// ── RECAPTURE CROP HANDLER ────────────────────────────────────────────────────
+function handleRetakeCrop() {
+  resetPuzzleOnly();
+  lastSeenFrame.box = null;
+  lastSeenFrame.at = 0;
+  triggerFlash();
+  playTone({ freq: 660, type: "square", gain: 0.14, attack: 0.001, decay: 0.08, duration: 0.1 });
+  const pName = players[currentPlayerIndex]?.name || "Player";
+  statusText.textContent = gamePhase === "playing" ? `${pName} — frame your photo again` : "frame your photo again";
+  updateGestureHUD();
+}
+
 function startNewGame() {
-  players.forEach((p) => { p.time = null; p.photo = null; });
+  players.forEach((p) => {
+    p.time = null;
+    p.photo = null;
+  });
   currentPlayerIndex = 0;
   gamePhase = "playing";
   galleryEntries.length = 0;
   galleryStrip.innerHTML = "";
   galleryCount.textContent = `0 / ${STRIP_MAX_PHOTOS}`;
   if (galleryEmpty) {
-    galleryEmpty.style.display = "block";
+    galleryEmpty.style.display = "flex";
     galleryStrip.appendChild(galleryEmpty);
   }
   hideStripComplete();
@@ -499,15 +671,15 @@ function startNewGame() {
   hideLeaderboard();
   resetPuzzleOnly();
   updateTurnIndicator();
-  statusText.textContent = "ready";
+  statusText.textContent = `${players[0].name} — frame your photo`;
 }
 
 function fitCanvasToWindow() {
   const stageEl = document.getElementById("stage");
   const vw = stageEl.clientWidth;
   const vh = stageEl.clientHeight;
-  const videoAspect = canvas.width / canvas.height;
-  const containerAspect = vw / vh;
+  const videoAspect = canvas.width / (canvas.height || 1);
+  const containerAspect = vw / (vh || 1);
   let cssWidth, cssHeight;
   if (containerAspect > videoAspect) {
     cssWidth = vw;
@@ -518,13 +690,15 @@ function fitCanvasToWindow() {
   }
   canvas.style.width = `${cssWidth}px`;
   canvas.style.height = `${cssHeight}px`;
+  fxCanvas.width = vw;
+  fxCanvas.height = vh;
 }
 
 window.addEventListener("resize", fitCanvasToWindow);
 
 async function initWebcam() {
   if (!navigator.mediaDevices?.getUserMedia) {
-    throw new Error("This browser does not support getUserMedia.");
+    throw new Error("This browser does not support getUserMedia camera access.");
   }
   const stream = await navigator.mediaDevices.getUserMedia({
     video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
@@ -537,8 +711,8 @@ async function initWebcam() {
       resolve();
     };
   });
-  canvas.width = videoEl.videoWidth;
-  canvas.height = videoEl.videoHeight;
+  canvas.width = videoEl.videoWidth || 1280;
+  canvas.height = videoEl.videoHeight || 720;
   fitCanvasToWindow();
 }
 
@@ -551,18 +725,12 @@ function withTimeout(promise, ms, timeoutMessage) {
 }
 
 async function initHandLandmarker() {
-  let vision;
-  try {
-    vision = await withTimeout(
-      FilesetResolver.forVisionTasks(
-        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
-      ),
-      LOAD_TIMEOUT_MS,
-      "Timed out loading MediaPipe WASM runtime. Check your internet connection."
-    );
-  } catch (err) {
-    throw err;
-  }
+  const vision = await withTimeout(
+    FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"),
+    LOAD_TIMEOUT_MS,
+    "Timed out loading MediaPipe WASM runtime. Check your internet connection."
+  );
+
   try {
     const handLandmarker = await withTimeout(
       HandLandmarker.createFromOptions(vision, {
@@ -578,33 +746,29 @@ async function initHandLandmarker() {
         minTrackingConfidence: 0.6,
       }),
       LOAD_TIMEOUT_MS,
-      "Timed out downloading HandLandmarker model (~10MB) with GPU."
+      "Timed out downloading HandLandmarker model with GPU."
     );
     return handLandmarker;
   } catch (gpuErr) {
     console.warn("[EPIC Special Puzzle] GPU delegate failed, retrying with CPU…", gpuErr);
   }
-  try {
-    const handLandmarker = await withTimeout(
-      HandLandmarker.createFromOptions(vision, {
-        baseOptions: {
-          modelAssetPath:
-            "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
-          delegate: "CPU",
-        },
-        runningMode: "video",
-        numHands: 2,
-        minHandDetectionConfidence: 0.6,
-        minHandPresenceConfidence: 0.6,
-        minTrackingConfidence: 0.6,
-      }),
-      LOAD_TIMEOUT_MS,
-      "Timed out downloading HandLandmarker model even with CPU. Check your connection."
-    );
-    return handLandmarker;
-  } catch (cpuErr) {
-    throw cpuErr;
-  }
+
+  return await withTimeout(
+    HandLandmarker.createFromOptions(vision, {
+      baseOptions: {
+        modelAssetPath:
+          "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+        delegate: "CPU",
+      },
+      runningMode: "video",
+      numHands: 2,
+      minHandDetectionConfidence: 0.6,
+      minHandPresenceConfidence: 0.6,
+      minTrackingConfidence: 0.6,
+    }),
+    LOAD_TIMEOUT_MS,
+    "Timed out downloading HandLandmarker model with CPU."
+  );
 }
 
 function dist2D(a, b) {
@@ -666,6 +830,7 @@ function startCountdown(frameBox) {
   countdown.active = true;
   countdown.startedAt = performance.now();
   lastCountdownN = -1;
+  updateGestureHUD();
 }
 
 function drawCountdownOverlay(box) {
@@ -693,13 +858,24 @@ function drawCountdownOverlay(box) {
   const cx = box.x + box.width / 2;
   const cy = box.y + box.height / 2;
 
-  ctx.fillStyle = "rgba(10,10,8,0.45)";
+  ctx.fillStyle = "rgba(10,12,18,0.55)";
   ctx.fillRect(box.x, box.y, box.width, box.height);
 
-  ctx.font = `${Math.max(48, Math.min(box.width, box.height) * 0.4)}px 'IBM Plex Mono', monospace`;
+  // Circular progress ring around countdown number
+  const radius = Math.max(30, Math.min(box.width, box.height) * 0.22);
+  const frac = (COUNTDOWN_SECONDS - remaining) / COUNTDOWN_SECONDS;
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
+  ctx.strokeStyle = "#f5c518";
+  ctx.lineWidth = 5;
+  ctx.stroke();
+
+  ctx.font = `bold ${Math.max(48, Math.min(box.width, box.height) * 0.35)}px 'Outfit', sans-serif`;
   ctx.fillStyle = "#f5c518";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
+  ctx.shadowColor = "rgba(245,197,24,0.8)";
+  ctx.shadowBlur = 16;
   ctx.fillText(String(n), cx, cy);
   ctx.restore();
 
@@ -718,13 +894,13 @@ function applyPhotoboothEffect(imageData, bw = false) {
   for (let i = 0; i < d.length; i += 4) {
     const noise = gaussianNoise(PHOTOBOOTH_NOISE_STD);
     if (bw) {
-      const gray = 0.299 * d[i] + 0.587 * d[i+1] + 0.114 * d[i+2];
+      const gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
       const v = Math.max(0, Math.min(255, gray * PHOTOBOOTH_CONTRAST_ALPHA + PHOTOBOOTH_BRIGHTNESS_BETA + noise));
-      d[i] = d[i+1] = d[i+2] = v;
+      d[i] = d[i + 1] = d[i + 2] = v;
     } else {
-      d[i]   = Math.max(0, Math.min(255, d[i]   * PHOTOBOOTH_CONTRAST_ALPHA + PHOTOBOOTH_BRIGHTNESS_BETA + noise));
-      d[i+1] = Math.max(0, Math.min(255, d[i+1] * PHOTOBOOTH_CONTRAST_ALPHA + PHOTOBOOTH_BRIGHTNESS_BETA + noise));
-      d[i+2] = Math.max(0, Math.min(255, d[i+2] * PHOTOBOOTH_CONTRAST_ALPHA + PHOTOBOOTH_BRIGHTNESS_BETA + noise));
+      d[i] = Math.max(0, Math.min(255, d[i] * PHOTOBOOTH_CONTRAST_ALPHA + PHOTOBOOTH_BRIGHTNESS_BETA + noise));
+      d[i + 1] = Math.max(0, Math.min(255, d[i + 1] * PHOTOBOOTH_CONTRAST_ALPHA + PHOTOBOOTH_BRIGHTNESS_BETA + noise));
+      d[i + 2] = Math.max(0, Math.min(255, d[i + 2] * PHOTOBOOTH_CONTRAST_ALPHA + PHOTOBOOTH_BRIGHTNESS_BETA + noise));
     }
   }
   return imageData;
@@ -759,7 +935,7 @@ function finishCountdownAndCapture(box) {
 
   triggerFlash();
 
-  // color version — saved to strip at the end
+  // Color version for polaroid
   const colorImageData = cropCtx.getImageData(0, 0, cropCanvas.width, cropCanvas.height);
   applyPhotoboothEffect(colorImageData, false);
   const colorCanvas = document.createElement("canvas");
@@ -768,7 +944,7 @@ function finishCountdownAndCapture(box) {
   colorCanvas.getContext("2d").putImageData(colorImageData, 0, 0);
   applyVignette(colorCanvas);
 
-  // B&W version — used for puzzle pieces while solving
+  // B&W version for puzzle solving
   const bwImageData = cropCtx.getImageData(0, 0, cropCanvas.width, cropCanvas.height);
   applyPhotoboothEffect(bwImageData, true);
   cropCtx.putImageData(bwImageData, 0, 0);
@@ -790,111 +966,88 @@ function finishCountdownAndCapture(box) {
       pieceCanvas.width = w;
       pieceCanvas.height = h;
       pieceCanvas.getContext("2d").drawImage(cropCanvas, sx, sy, w, h, 0, 0, w, h);
-      pieces.push({ row, col, canvas: pieceCanvas, w, h, x: 0, y: 0, placed: false, dragging: false });
+      pieces.push({
+        id: row * GRID + col,
+        row,
+        col,
+        currentGridRow: row,
+        currentGridCol: col,
+        canvas: pieceCanvas,
+        w,
+        h,
+        x: box.x + col * tileW,
+        y: box.y + row * tileH,
+        placed: false,
+        dragging: false,
+        animating: false,
+      });
     }
   }
 
-  const slots = [];
-  for (let row = 0; row < GRID; row++) {
-    for (let col = 0; col < GRID; col++) {
-      slots.push({ x: box.x + col * tileW, y: box.y + row * tileH });
-    }
-  }
-  shuffle(slots);
+  // Generate a valid shuffle where pieces are NOT in their solved positions
+  let slotIndices = Array.from({ length: GRID * GRID }, (_, i) => i);
+  let attempts = 0;
+  do {
+    slotIndices = shuffle([...slotIndices]);
+    attempts++;
+  } while (
+    attempts < 30 &&
+    slotIndices.filter((slotIdx, i) => slotIdx === i).length > 2
+  );
 
   pieces.forEach((piece, i) => {
-    piece.x = slots[i].x;
-    piece.y = slots[i].y;
-    if (isNearOwnCell(piece, box, tileW, tileH)) snapPieceToCell(piece, box, tileW, tileH);
+    const slotIdx = slotIndices[i];
+    const targetRow = Math.floor(slotIdx / GRID);
+    const targetCol = slotIdx % GRID;
+    piece.currentGridRow = targetRow;
+    piece.currentGridCol = targetCol;
+    piece.x = box.x + targetCol * tileW;
+    piece.y = box.y + targetRow * tileH;
+    piece.placed = piece.currentGridRow === piece.row && piece.currentGridCol === piece.col;
   });
 
   puzzle.boardBox = box;
   puzzle.pieces = pieces;
   puzzle.tileW = tileW;
   puzzle.tileH = tileH;
-  puzzle.solved = pieces.every((p) => p.placed);
+  puzzle.solved = checkPuzzleSolved();
   puzzle.timerStartedAt = performance.now();
   puzzle.timerElapsed = 0;
   appState = "puzzle";
   fistHoldCounter = 0;
-  retakeBtn.classList.add("hidden");
+
   updateProgressBadge();
+  updateGestureHUD();
   playTone({ freq: 220, type: "sine", gain: 0.15, attack: 0.001, decay: 0.08, duration: 0.1 });
   startRecording();
 }
 
+// ── Strict Puzzle Validation & Swapping Mechanics ─────────────────────────────
 const drag = { activeHand: null, piece: null, offsetX: 0, offsetY: 0 };
+const pointerDrag = { active: false, piece: null, offsetX: 0, offsetY: 0 };
 
-function isNearOwnCell(piece, box, tileW, tileH) {
-  const correctX = box.x + piece.col * tileW;
-  const correctY = box.y + piece.row * tileH;
-  const dx = piece.x - correctX;
-  const dy = piece.y - correctY;
-  const tolerance = Math.min(tileW, tileH) * SNAP_DISTANCE_RATIO;
-  return Math.sqrt(dx * dx + dy * dy) < tolerance;
+function checkPuzzleSolved() {
+  if (!puzzle.pieces || puzzle.pieces.length !== GRID * GRID) return false;
+  // Strict rule: No piece is dragging or animating, and EVERY piece must be in its home slot
+  const anyDragging = puzzle.pieces.some((p) => p.dragging);
+  const anyAnimating = puzzle.pieces.some((p) => p.animating);
+  if (anyDragging || anyAnimating) return false;
+
+  return puzzle.pieces.every(
+    (p) => p.currentGridRow === p.row && p.currentGridCol === p.col
+  );
 }
 
-function reconcilePlacedState(box, tileW, tileH) {
-  if (!box || !puzzle.pieces.length) return false;
-  for (const piece of puzzle.pieces) {
-    if (piece.displacing || piece.dragging) continue;
-    piece.placed = isNearOwnCell(piece, box, tileW, tileH);
-  }
-  return puzzle.pieces.every((p) => p.placed);
-}
-
-function snapPieceToCell(piece, box, tileW, tileH) {
-  displaceCellOccupant(piece, piece.row, piece.col, box, tileW, tileH);
-  piece.x = box.x + piece.col * tileW;
-  piece.y = box.y + piece.row * tileH;
-  piece.placed = true;
-}
-
-function displaceCellOccupant(piece, targetRow, targetCol, box, tileW, tileH) {
-  const cellX = box.x + targetCol * tileW;
-  const cellY = box.y + targetRow * tileH;
-  const occupant = puzzle.pieces.find((p) => {
-    if (p === piece || p.displacing) return false;
-    const cx = p.x + p.w / 2;
-    const cy = p.y + p.h / 2;
-    return cx >= cellX && cx < cellX + tileW && cy >= cellY && cy < cellY + tileH;
-  });
-  if (!occupant) return;
-  if (occupant.row === targetRow && occupant.col === targetCol && occupant.placed) return;
-  occupant.placed = false;
-  const freeCells = [];
-  for (let row = 0; row < GRID; row++) {
-    for (let col = 0; col < GRID; col++) {
-      if (row === targetRow && col === targetCol) continue;
-      const cx0 = box.x + col * tileW;
-      const cy0 = box.y + row * tileH;
-      const taken = puzzle.pieces.some((p) => {
-        if (p === occupant || p === piece || p.displacing) return false;
-        const cx = p.x + p.w / 2;
-        const cy = p.y + p.h / 2;
-        return cx >= cx0 && cx < cx0 + tileW && cy >= cy0 && cy < cy0 + tileH;
-      });
-      if (!taken) freeCells.push({ row, col });
-    }
-  }
-  let targetSlot = freeCells.length > 0
-    ? freeCells[Math.floor(Math.random() * freeCells.length)]
-    : { row: occupant.row, col: occupant.col };
-  const jitterX = (Math.random() - 0.5) * tileW * 0.5;
-  const jitterY = (Math.random() - 0.5) * tileH * 0.5;
-  animateDisplacement(occupant, box.x + targetSlot.col * tileW + jitterX, box.y + targetSlot.row * tileH + jitterY, box);
-}
-
-const DISPLACE_ANIM_MS = 220;
-
-function animateDisplacement(piece, targetX, targetY, box) {
+function animatePieceToSlot(piece, targetX, targetY) {
   const startX = piece.x;
   const startY = piece.y;
   const startedAt = performance.now();
-  piece.displacing = true;
+  piece.animating = true;
+
   function step() {
-    const t = Math.min(1, (performance.now() - startedAt) / DISPLACE_ANIM_MS);
-    const eased = 1 - Math.pow(1 - t, 3);
+    const elapsed = performance.now() - startedAt;
+    const t = Math.min(1, elapsed / SWAP_ANIM_MS);
+    const eased = 1 - Math.pow(1 - t, 3); // Smooth cubic ease-out
     piece.x = startX + (targetX - startX) * eased;
     piece.y = startY + (targetY - startY) * eased;
     if (t < 1) {
@@ -902,22 +1055,88 @@ function animateDisplacement(piece, targetX, targetY, box) {
     } else {
       piece.x = targetX;
       piece.y = targetY;
-      piece.displacing = false;
-      clampPieceToBoard(piece);
+      piece.animating = false;
+      piece.placed = piece.currentGridRow === piece.row && piece.currentGridCol === piece.col;
+      const wasSolved = puzzle.solved;
+      puzzle.solved = checkPuzzleSolved();
+      if (!wasSolved && puzzle.solved) {
+        soundComplete();
+        spawnConfetti(60);
+      }
+      updateProgressBadge();
+      updateGestureHUD();
     }
   }
   requestAnimationFrame(step);
+}
+
+function dropPieceAtPosition(piece) {
+  const box = puzzle.boardBox;
+  if (!box) return;
+
+  const cx = piece.x + piece.w / 2;
+  const cy = piece.y + piece.h / 2;
+  const targetCol = Math.min(GRID - 1, Math.max(0, Math.floor((cx - box.x) / puzzle.tileW)));
+  const targetRow = Math.min(GRID - 1, Math.max(0, Math.floor((cy - box.y) / puzzle.tileH)));
+
+  const sourceRow = piece.currentGridRow;
+  const sourceCol = piece.currentGridCol;
+
+  if (targetRow === sourceRow && targetCol === sourceCol) {
+    // Snapped back to original slot
+    piece.x = box.x + sourceCol * puzzle.tileW;
+    piece.y = box.y + sourceRow * puzzle.tileH;
+    piece.placed = piece.currentGridRow === piece.row && piece.currentGridCol === piece.col;
+  } else {
+    // Find occupant in target slot to swap with
+    const otherPiece = puzzle.pieces.find(
+      (p) => p !== piece && p.currentGridRow === targetRow && p.currentGridCol === targetCol
+    );
+
+    if (otherPiece) {
+      // Clean 2-way swap
+      otherPiece.currentGridRow = sourceRow;
+      otherPiece.currentGridCol = sourceCol;
+      animatePieceToSlot(
+        otherPiece,
+        box.x + sourceCol * puzzle.tileW,
+        box.y + sourceRow * puzzle.tileH
+      );
+    }
+
+    piece.currentGridRow = targetRow;
+    piece.currentGridCol = targetCol;
+    piece.x = box.x + targetCol * puzzle.tileW;
+    piece.y = box.y + targetRow * puzzle.tileH;
+    piece.placed = piece.currentGridRow === piece.row && piece.currentGridCol === piece.col;
+  }
+
+  // Update all placed statuses
+  puzzle.pieces.forEach((p) => {
+    p.placed = p.currentGridRow === p.row && p.currentGridCol === p.col;
+  });
+
+  const wasSolved = puzzle.solved;
+  puzzle.solved = checkPuzzleSolved();
+
+  if (piece.placed) soundSnap();
+  if (!wasSolved && puzzle.solved) {
+    soundComplete();
+    spawnConfetti(60);
+  }
+  updateProgressBadge();
+  updateGestureHUD();
 }
 
 function findNearestPiece(px, py) {
   let best = null;
   let bestDist = Infinity;
   for (const piece of puzzle.pieces) {
-    if (piece.displacing || piece.placed) continue;
+    if (piece.animating) continue;
     const cx = piece.x + piece.w / 2;
     const cy = piece.y + piece.h / 2;
     const d = Math.hypot(px - cx, py - cy);
-    if (d < Math.max(piece.w, piece.h) * 0.75 && d < bestDist) {
+    if (d < Math.max(piece.w, piece.h) * 0.85 && d < bestDist) {
       best = piece;
       bestDist = d;
     }
@@ -945,42 +1164,74 @@ function handleDragForHand(handLabel, pinching, indexPx) {
     if (drag.activeHand === handLabel && drag.piece) {
       const piece = drag.piece;
       piece.dragging = false;
-      if (isNearOwnCell(piece, puzzle.boardBox, puzzle.tileW, puzzle.tileH)) {
-        snapPieceToCell(piece, puzzle.boardBox, puzzle.tileW, puzzle.tileH);
-      } else {
-        clampPieceToBoard(piece);
-        const box = puzzle.boardBox;
-        const cx = piece.x + piece.w / 2;
-        const cy = piece.y + piece.h / 2;
-        const dropCol = Math.min(GRID - 1, Math.max(0, Math.floor((cx - box.x) / puzzle.tileW)));
-        const dropRow = Math.min(GRID - 1, Math.max(0, Math.floor((cy - box.y) / puzzle.tileH)));
-        displaceCellOccupant(piece, dropRow, dropCol, box, puzzle.tileW, puzzle.tileH);
-      }
       drag.activeHand = null;
-      const wasSolved = puzzle.solved;
       drag.piece = null;
-      puzzle.solved = reconcilePlacedState(puzzle.boardBox, puzzle.tileW, puzzle.tileH);
-      if (piece.placed) soundSnap();
-      if (!wasSolved && puzzle.solved) soundComplete();
-      updateProgressBadge();
+      dropPieceAtPosition(piece);
     }
   }
 }
 
-function clampPieceToBoard(piece) {
-  const box = puzzle.boardBox;
-  piece.x = Math.min(Math.max(piece.x, box.x), box.x + box.width - piece.w);
-  piece.y = Math.min(Math.max(piece.y, box.y), box.y + box.height - piece.h);
+// ── Mouse / Touch Pointer Fallback for Dragging Pieces ────────────────────────
+function getCanvasPoint(e) {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / (rect.width || 1);
+  const scaleY = canvas.height / (rect.height || 1);
+  return {
+    x: (e.clientX - rect.left) * scaleX,
+    y: (e.clientY - rect.top) * scaleY,
+  };
 }
+
+canvas.addEventListener("pointerdown", (e) => {
+  if (appState !== "puzzle" || !puzzle.boardBox) return;
+  const pt = getCanvasPoint(e);
+  const candidate = findNearestPiece(pt.x, pt.y);
+  if (candidate) {
+    pointerDrag.active = true;
+    pointerDrag.piece = candidate;
+    pointerDrag.offsetX = pt.x - candidate.x;
+    pointerDrag.offsetY = pt.y - candidate.y;
+    candidate.dragging = true;
+    candidate.placed = false;
+    canvas.setPointerCapture(e.pointerId);
+  }
+});
+
+canvas.addEventListener("pointermove", (e) => {
+  if (!pointerDrag.active || !pointerDrag.piece) return;
+  const pt = getCanvasPoint(e);
+  pointerDrag.piece.x = pt.x - pointerDrag.offsetX;
+  pointerDrag.piece.y = pt.y - pointerDrag.offsetY;
+});
+
+function endPointerDrag(e) {
+  if (!pointerDrag.active || !pointerDrag.piece) return;
+  const piece = pointerDrag.piece;
+  piece.dragging = false;
+  pointerDrag.active = false;
+  pointerDrag.piece = null;
+  dropPieceAtPosition(piece);
+  try {
+    canvas.releasePointerCapture(e.pointerId);
+  } catch (err) {}
+}
+
+canvas.addEventListener("pointerup", endPointerDrag);
+canvas.addEventListener("pointercancel", endPointerDrag);
 
 function drawBoardAndPieces() {
   const box = puzzle.boardBox;
+  if (!box) return;
+
+  // Board background
   ctx.save();
-  ctx.fillStyle = "#000";
+  ctx.fillStyle = "#0c0e14";
   ctx.fillRect(box.x, box.y, box.width, box.height);
   ctx.restore();
+
+  // Grid guidelines
   ctx.save();
-  ctx.strokeStyle = "rgba(245,197,24,0.18)";
+  ctx.strokeStyle = "rgba(245, 197, 24, 0.2)";
   ctx.lineWidth = 1;
   for (let i = 1; i < GRID; i++) {
     ctx.beginPath();
@@ -993,55 +1244,75 @@ function drawBoardAndPieces() {
     ctx.stroke();
   }
   ctx.restore();
+
+  // Draw pieces (dragging pieces on top)
   const sorted = [...puzzle.pieces].sort((a, b) => (a.dragging ? 1 : 0) - (b.dragging ? 1 : 0));
   for (const piece of sorted) {
     ctx.save();
-    if (piece.dragging) { ctx.shadowColor = "rgba(245,197,24,0.9)"; ctx.shadowBlur = 14; }
+    if (piece.dragging) {
+      ctx.shadowColor = "rgba(245, 197, 24, 0.95)";
+      ctx.shadowBlur = 20;
+    }
     ctx.drawImage(piece.canvas, piece.x, piece.y, piece.w, piece.h);
-    ctx.strokeStyle = piece.placed ? "#5fae6e" : "rgba(234,229,214,0.5)";
-    ctx.lineWidth = piece.dragging ? 3 : 1.5;
+
+    // Green border ONLY when correctly placed in home slot
+    const isCorrect = piece.currentGridRow === piece.row && piece.currentGridCol === piece.col && !piece.dragging;
+    ctx.strokeStyle = piece.dragging
+      ? "#f5c518"
+      : isCorrect
+      ? "#10b981"
+      : "rgba(255, 255, 255, 0.35)";
+    ctx.lineWidth = piece.dragging ? 3.5 : isCorrect ? 2.5 : 1.5;
     ctx.strokeRect(piece.x, piece.y, piece.w, piece.h);
     ctx.restore();
   }
+
+  // Board outer frame
   ctx.save();
-  ctx.strokeStyle = puzzle.solved ? "#5fae6e" : "#f5c518";
+  ctx.strokeStyle = puzzle.solved ? "#10b981" : "#f5c518";
   ctx.lineWidth = 3;
   ctx.strokeRect(box.x, box.y, box.width, box.height);
   ctx.restore();
+
+  // Solved victory overlay on board
   if (puzzle.solved) {
     ctx.save();
-    ctx.fillStyle = "rgba(95,174,110,0.15)";
+    ctx.fillStyle = "rgba(16, 185, 129, 0.18)";
     ctx.fillRect(box.x, box.y, box.width, box.height);
-    ctx.font = `${Math.max(20, box.width * 0.07)}px 'IBM Plex Mono', monospace`;
-    ctx.fillStyle = "#5fae6e";
+    ctx.font = `bold ${Math.max(22, box.width * 0.08)}px 'Outfit', sans-serif`;
+    ctx.fillStyle = "#10b981";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
+    ctx.shadowColor = "rgba(16, 185, 129, 0.8)";
+    ctx.shadowBlur = 14;
     const pname = players[currentPlayerIndex]?.name || "Player";
-    ctx.fillText(`${pname} — COMPLETE!`, box.x + box.width / 2, box.y + box.height / 2 - box.height * 0.04);
-    ctx.font = `${Math.max(12, box.width * 0.035)}px 'IBM Plex Mono', monospace`;
-    ctx.fillText(`Time: ${formatTime(puzzle.timerElapsed)}`, box.x + box.width / 2, box.y + box.height / 2 + box.height * 0.04);
-    ctx.font = `${Math.max(10, box.width * 0.028)}px 'IBM Plex Mono', monospace`;
-    ctx.fillText("fist to save", box.x + box.width / 2, box.y + box.height / 2 + box.height * 0.08);
+    ctx.fillText(`${pname} — SOLVED!`, box.x + box.width / 2, box.y + box.height / 2 - box.height * 0.05);
+
+    ctx.font = `bold ${Math.max(13, box.width * 0.04)}px 'IBM Plex Mono', monospace`;
+    ctx.fillStyle = "#fff";
+    ctx.fillText(`Time: ${formatTime(puzzle.timerElapsed)}`, box.x + box.width / 2, box.y + box.height / 2 + box.height * 0.05);
+
+    ctx.font = `bold ${Math.max(11, box.width * 0.032)}px 'IBM Plex Mono', monospace`;
+    ctx.fillStyle = "rgba(255,255,255,0.9)";
+    ctx.fillText("HOLD FIST ✊ TO SAVE", box.x + box.width / 2, box.y + box.height / 2 + box.height * 0.12);
     ctx.restore();
   }
 
   if (!puzzle.solved && puzzle.timerStartedAt) {
     puzzle.timerElapsed = (performance.now() - puzzle.timerStartedAt) / 1000;
   }
-  const timeStr = formatTime(puzzle.timerElapsed);
-  ctx.save();
-  ctx.font = `bold ${Math.max(16, box.width * 0.045)}px 'IBM Plex Mono', monospace`;
-  ctx.textAlign = "right";
-  ctx.textBaseline = "top";
-  ctx.fillStyle = puzzle.solved ? "#5fae6e" : "#f5c518";
-  ctx.fillText(timeStr, box.x + box.width - 8, box.y + 8);
-  ctx.restore();
+  puzzleTimerText.textContent = formatTime(puzzle.timerElapsed);
 }
 
 function updateProgressBadge() {
-  if (appState !== "puzzle") { progressBadge.classList.remove("visible", "solved"); return; }
-  const placedCount = puzzle.pieces.filter((p) => p.placed).length;
-  progressText.textContent = `${placedCount} / ${puzzle.pieces.length} pieces placed`;
+  if (appState !== "puzzle" || !puzzle.pieces || puzzle.pieces.length === 0) {
+    progressBadge.classList.remove("visible", "solved");
+    return;
+  }
+  const placedCount = puzzle.pieces.filter(
+    (p) => p.currentGridRow === p.row && p.currentGridCol === p.col
+  ).length;
+  progressText.textContent = `${placedCount} / ${puzzle.pieces.length}`;
   progressBadge.classList.add("visible");
   progressBadge.classList.toggle("solved", puzzle.solved);
 }
@@ -1068,10 +1339,17 @@ function applyColorInsideBox(box) {
 function drawLiveFrameOverlay(box) {
   ctx.save();
   ctx.strokeStyle = "#f5c518";
-  ctx.lineWidth = 3;
+  ctx.lineWidth = 2;
+  ctx.setLineDash([8, 8]);
   ctx.strokeRect(box.x, box.y, box.width, box.height);
-  const cornerLen = 18;
+  ctx.setLineDash([]);
+
+  // Corner brackets
+  const cornerLen = 22;
   ctx.lineWidth = 4;
+  ctx.strokeStyle = "#f5c518";
+  ctx.shadowColor = "rgba(245,197,24,0.7)";
+  ctx.shadowBlur = 10;
   const corners = [
     [box.x, box.y, 1, 1],
     [box.x + box.width, box.y, -1, 1],
@@ -1085,6 +1363,12 @@ function drawLiveFrameOverlay(box) {
     ctx.lineTo(cx + cornerLen * dx, cy);
     ctx.stroke();
   }
+
+  // Dimension tag
+  ctx.font = "bold 10px 'IBM Plex Mono', monospace";
+  ctx.fillStyle = "#f5c518";
+  ctx.textAlign = "left";
+  ctx.fillText(`${Math.round(box.width)} × ${Math.round(box.height)}px`, box.x + 4, box.y - 6);
   ctx.restore();
 }
 
@@ -1097,10 +1381,10 @@ function drawHandSkeleton(landmarksPx) {
   ctx.save();
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
-  ctx.shadowColor = "rgba(255,255,255,0.85)";
+  ctx.shadowColor = "rgba(0, 229, 255, 0.85)";
   ctx.shadowBlur = 10;
-  ctx.strokeStyle = "white";
-  ctx.lineWidth = 3;
+  ctx.strokeStyle = "rgba(0, 229, 255, 0.9)";
+  ctx.lineWidth = 2.5;
   for (const [iA, iB] of HAND_CONNECTIONS) {
     const a = landmarksPx[iA];
     const b = landmarksPx[iB];
@@ -1110,7 +1394,7 @@ function drawHandSkeleton(landmarksPx) {
     ctx.stroke();
   }
   ctx.shadowBlur = 6;
-  ctx.fillStyle = "white";
+  ctx.fillStyle = "#ffffff";
   for (const p of landmarksPx) {
     ctx.beginPath();
     ctx.arc(p.x, p.y, 3.2, 0, Math.PI * 2);
@@ -1141,7 +1425,17 @@ function startShatter(sourceCanvas, box) {
       const fragCanvas = document.createElement("canvas");
       fragCanvas.width = Math.ceil(fragW);
       fragCanvas.height = Math.ceil(fragH);
-      fragCanvas.getContext("2d").drawImage(sourceCanvas, sx, sy, fragW, fragH, 0, 0, fragCanvas.width, fragCanvas.height);
+      fragCanvas.getContext("2d").drawImage(
+        sourceCanvas,
+        sx,
+        sy,
+        fragW,
+        fragH,
+        0,
+        0,
+        fragCanvas.width,
+        fragCanvas.height
+      );
       const cx = box.x + sx + fragW / 2;
       const cy = box.y + sy + fragH / 2;
       const boardCx = box.x + box.width / 2;
@@ -1151,7 +1445,11 @@ function startShatter(sourceCanvas, box) {
       const dirLen = Math.max(1, Math.hypot(dirX, dirY));
       const speed = 90 + Math.random() * 160;
       fragments.push({
-        canvas: fragCanvas, x: cx, y: cy, w: fragW, h: fragH,
+        canvas: fragCanvas,
+        x: cx,
+        y: cy,
+        w: fragW,
+        h: fragH,
         vx: (dirX / dirLen) * speed + (Math.random() - 0.5) * 40,
         vy: (dirY / dirLen) * speed + (Math.random() - 0.5) * 40 - 60,
         rotation: 0,
@@ -1171,7 +1469,10 @@ function startShatter(sourceCanvas, box) {
 function updateAndDrawShatter() {
   const elapsedMs = performance.now() - shatter.startedAt;
   const t = Math.min(1, elapsedMs / SHATTER_DURATION_MS);
-  if (t >= 1) { finishShatter(); return; }
+  if (t >= 1) {
+    finishShatter();
+    return;
+  }
   const dt = 1 / 60;
   const fadeStart = 0.45;
   ctx.save();
@@ -1196,31 +1497,31 @@ function updateAndDrawShatter() {
 function finishShatter() {
   shatter.active = false;
   shatter.fragments = [];
+  players[currentPlayerIndex].time = puzzle.timerElapsed;
   if (shatter.pendingCanvas) {
     addToGallery(shatter.pendingCanvas);
-    statusText.textContent = "saved to strip!";
+    statusText.textContent = "saved to photobooth strip!";
     shatter.pendingCanvas = null;
     soundSaved();
   }
-  players[currentPlayerIndex].time = puzzle.timerElapsed;
   resetPuzzleOnly();
   advanceToNextPlayer();
 }
 
 function handleFistReset() {
   if (appState !== "puzzle") {
-    statusText.textContent = "reset (fist)";
+    statusText.textContent = "reset board";
     resetPuzzleOnly();
     return;
   }
-  const reallySolved = reconcilePlacedState(puzzle.boardBox, puzzle.tileW, puzzle.tileH);
+  const reallySolved = checkPuzzleSolved();
   puzzle.solved = reallySolved;
   if (reallySolved && puzzle.fullPhotoboothCanvas) {
     shatter.pendingCanvas = puzzle.fullPhotoboothCanvas;
     startShatter(puzzle.fullPhotoboothCanvas, puzzle.boardBox);
   } else {
-    statusText.textContent = "reset (fist)";
-    resetPuzzleOnly();
+    statusText.textContent = "puzzle not solved yet!";
+    playTone({ freq: 300, type: "sawtooth", gain: 0.1, duration: 0.15 });
   }
 }
 
@@ -1230,7 +1531,7 @@ let fistHoldCounter = 0;
 function processResults(result) {
   if (appState === "shattering") {
     updateAndDrawShatter();
-    statusText.textContent = "saving…";
+    statusText.textContent = "saving polaroid…";
     return;
   }
 
@@ -1241,26 +1542,35 @@ function processResults(result) {
     statusDot.className = puzzle.solved ? "status-dot solved" : "status-dot";
     fistHoldCounter = 0;
     freezeGate.holding = false;
-    if (drag.activeHand && drag.piece) handleDragForHand(drag.activeHand, false, { x: drag.piece.x, y: drag.piece.y });
+    if (drag.activeHand && drag.piece) {
+      handleDragForHand(drag.activeHand, false, { x: drag.piece.x, y: drag.piece.y });
+    }
     if (appState === "tracking") {
       const sinceLastSeen = performance.now() - lastSeenFrame.at;
       if (lastSeenFrame.box && sinceLastSeen < FRAME_GRACE_MS) {
         applyColorInsideBox(lastSeenFrame.box);
         drawLiveFrameOverlay(lastSeenFrame.box);
       }
-      statusText.textContent = gamePhase === "playing" ? `${players[currentPlayerIndex]?.name || "Player"} — frame your photo` : (isStripFull() ? "strip complete — download or reset" : "looking for hands…");
-      if (gamePhase === "playing") retakeBtn.classList.remove("hidden");
+      statusText.textContent =
+        gamePhase === "playing"
+          ? `${players[currentPlayerIndex]?.name || "Player"} — frame your photo`
+          : isStripFull()
+          ? "strip complete — download or reset"
+          : "looking for hands…";
       return;
     }
     if (appState === "countdown") {
-      if (gamePhase === "playing") retakeBtn.classList.remove("hidden");
-      drawCountdownOverlay(puzzle.boardBox); return;
+      drawCountdownOverlay(puzzle.boardBox);
+      return;
     }
     if (appState === "puzzle") {
-      puzzle.solved = reconcilePlacedState(puzzle.boardBox, puzzle.tileW, puzzle.tileH);
+      puzzle.solved = checkPuzzleSolved();
       updateProgressBadge();
+      updateGestureHUD();
       drawBoardAndPieces();
-      statusText.textContent = puzzle.solved ? `${players[currentPlayerIndex]?.name || "Player"} — puzzle complete! make a fist to save` : `${players[currentPlayerIndex]?.name || "Player"} — arrange the puzzle with pinch`;
+      statusText.textContent = puzzle.solved
+        ? `${players[currentPlayerIndex]?.name || "Player"} — puzzle complete! make a fist or click SAVE`
+        : `${players[currentPlayerIndex]?.name || "Player"} — arrange the puzzle with pinch or mouse`;
       return;
     }
     return;
@@ -1269,16 +1579,23 @@ function processResults(result) {
   statusDot.className = puzzle.solved ? "status-dot solved" : "status-dot live";
 
   const anyFist = handsLandmarks.some((lm) => isFist(lm));
-  const draggingNow = drag.activeHand !== null && drag.piece !== null;
+  const draggingNow = (drag.activeHand !== null && drag.piece !== null) || pointerDrag.active;
   if (anyFist && !draggingNow && appState !== "tracking") {
     fistHoldCounter++;
-    if (fistHoldCounter >= FIST_HOLD_FRAMES) { fistHoldCounter = 0; handleFistReset(); return; }
+    if (fistHoldCounter >= FIST_HOLD_FRAMES) {
+      fistHoldCounter = 0;
+      handleFistReset();
+      return;
+    }
   } else {
     fistHoldCounter = 0;
   }
 
   if (appState === "tracking") {
-    if (isStripFull()) { statusText.textContent = "strip complete — download or reset"; return; }
+    if (isStripFull()) {
+      statusText.textContent = "strip complete — download or reset";
+      return;
+    }
     if (handsLandmarks.length === 2) {
       const [handA, handB] = handsLandmarks;
       const indexA = mirrorLandmarkX(handA[LM.INDEX_TIP]);
@@ -1289,14 +1606,19 @@ function processResults(result) {
         drawLiveFrameOverlay(frameBox);
         lastSeenFrame.box = frameBox;
         lastSeenFrame.at = performance.now();
-        retakeBtn.classList.remove("hidden");
       }
       const bothPinching = isPinching(handA) && isPinching(handB);
       if (bothPinching && frameBox.width > 40 && frameBox.height > 40) {
-        if (!freezeGate.holding) { freezeGate.holding = true; freezeGate.since = performance.now(); }
+        if (!freezeGate.holding) {
+          freezeGate.holding = true;
+          freezeGate.since = performance.now();
+        }
         statusDot.className = "status-dot armed";
         statusText.textContent = "hold the pinch…";
-        if (performance.now() - freezeGate.since > FREEZE_HOLD_MS) { freezeGate.holding = false; startCountdown(frameBox); }
+        if (performance.now() - freezeGate.since > FREEZE_HOLD_MS) {
+          freezeGate.holding = false;
+          startCountdown(frameBox);
+        }
       } else {
         freezeGate.holding = false;
         statusText.textContent = "hands tracking";
@@ -1308,12 +1630,18 @@ function processResults(result) {
         applyColorInsideBox(lastSeenFrame.box);
         drawLiveFrameOverlay(lastSeenFrame.box);
       }
-      statusText.textContent = gamePhase === "playing" ? `${players[currentPlayerIndex]?.name || "Player"} — show 2 hands` : "hands tracking";
+      statusText.textContent =
+        gamePhase === "playing"
+          ? `${players[currentPlayerIndex]?.name || "Player"} — show 2 hands`
+          : "hands tracking";
     }
     return;
   }
 
-  if (appState === "countdown") { drawCountdownOverlay(puzzle.boardBox); return; }
+  if (appState === "countdown") {
+    drawCountdownOverlay(puzzle.boardBox);
+    return;
+  }
 
   if (appState === "puzzle") {
     const labelsPresent = new Set();
@@ -1327,15 +1655,18 @@ function processResults(result) {
     if (drag.activeHand && !labelsPresent.has(drag.activeHand) && drag.piece) {
       handleDragForHand(drag.activeHand, false, { x: drag.piece.x, y: drag.piece.y });
     }
-    if (!drag.piece) {
-      puzzle.solved = reconcilePlacedState(puzzle.boardBox, puzzle.tileW, puzzle.tileH);
+    if (!drag.piece && !pointerDrag.piece) {
+      puzzle.solved = checkPuzzleSolved();
       updateProgressBadge();
+      updateGestureHUD();
     }
     drawBoardAndPieces();
     drawHandSkeletonsOverBoard(handsLandmarks, puzzle.boardBox);
     statusText.textContent = puzzle.solved
-      ? (fistHoldCounter > 0 ? `${players[currentPlayerIndex]?.name || "Player"} — saving… hold fist (${fistHoldCounter}/${FIST_HOLD_FRAMES})` : `${players[currentPlayerIndex]?.name || "Player"} — puzzle complete! make a fist to save`)
-      : `${players[currentPlayerIndex]?.name || "Player"} — arrange the puzzle with pinch`;
+      ? fistHoldCounter > 0
+        ? `${players[currentPlayerIndex]?.name || "Player"} — saving… hold fist (${fistHoldCounter}/${FIST_HOLD_FRAMES})`
+        : `${players[currentPlayerIndex]?.name || "Player"} — puzzle complete! make a fist or click SAVE`
+      : `${players[currentPlayerIndex]?.name || "Player"} — arrange the puzzle with pinch or mouse`;
   }
 }
 
@@ -1346,6 +1677,7 @@ function renderLoop() {
     const result = handLandmarker.detectForVideo(videoEl, nowMs);
     processResults(result);
   }
+  updateAndDrawConfetti();
   requestAnimationFrame(renderLoop);
 }
 
@@ -1356,14 +1688,14 @@ function showError(message) {
 
 function showLoaderError(message) {
   loaderText.textContent = message;
-  loaderText.style.color = "#e0533d";
+  loaderText.style.color = "#ff4757";
   loaderRetry.classList.remove("hidden");
 }
 
 function resetLoaderUI() {
   loadingOverlay.classList.remove("hidden");
   loaderText.style.color = "";
-  loaderText.textContent = "loading HandLandmarker model…";
+  loaderText.textContent = "Loading HandLandmarker neural model…";
   loaderRetry.classList.add("hidden");
   errorBanner.style.display = "none";
 }
@@ -1371,10 +1703,11 @@ function resetLoaderUI() {
 async function boot() {
   resetLoaderUI();
   let settled = false;
-  const watchdogMs = (LOAD_TIMEOUT_MS * 2) + 5000;
+  const watchdogMs = LOAD_TIMEOUT_MS * 2 + 5000;
   const watchdog = setTimeout(() => {
-    if (!settled) showLoaderError("Loading is taking too long. Click retry or check your connection.");
+    if (!settled) showLoaderError("Loading is taking longer than expected. Click retry or check your connection.");
   }, watchdogMs);
+
   try {
     if (!videoEl.srcObject) await initWebcam();
     handLandmarker = await initHandLandmarker();
@@ -1388,44 +1721,41 @@ async function boot() {
     settled = true;
     clearTimeout(watchdog);
     if (err && err.name === "NotAllowedError") {
-      showLoaderError("Camera permission denied. Enable it in browser settings and click retry.");
+      showLoaderError("Camera permission denied. Enable camera access in your browser and click retry.");
     } else if (err && err.name === "NotFoundError") {
-      showLoaderError("No webcam found.");
+      showLoaderError("No webcam was found on your device.");
     } else {
-      showLoaderError((err && err.message) || "Error starting the app.");
+      showLoaderError((err && err.message) || "Error starting the application.");
     }
   }
 }
 
-loaderRetry.addEventListener("click", () => { boot(); });
+// ── Event Listeners ───────────────────────────────────────────────────────────
+loaderRetry.addEventListener("click", () => boot());
 
 if (downloadStripBtn) {
   updateStripDownloadAvailability();
+  downloadStripBtn.addEventListener("click", showStripModal);
 }
 
 if (downloadVideoBtn) {
   downloadVideoBtn.addEventListener("click", downloadVideo);
 }
 
-if (downloadStripBtn) {
-  downloadStripBtn.addEventListener("click", showStripModal);
-}
-
 if (stripModalDownload) {
-  stripModalDownload.addEventListener("click", () => {
-    downloadPhotoStrip();
-  });
+  stripModalDownload.addEventListener("click", () => downloadPhotoStrip());
 }
 
 if (stripModalClose) {
-  stripModalClose.addEventListener("click", () => {
-    stripModal.classList.add("hidden");
-  });
+  stripModalClose.addEventListener("click", () => stripModal.classList.add("hidden"));
+}
+if (stripModalCloseIcon) {
+  stripModalCloseIcon.addEventListener("click", () => stripModal.classList.add("hidden"));
 }
 
 if (resetAllBtn) {
   resetAllBtn.addEventListener("click", () => {
-    const confirmed = window.confirm("Are you sure you want to delete the entire photo strip and start over?");
+    const confirmed = window.confirm("Are you sure you want to reset all players and delete the photo strip?");
     if (confirmed) resetEverything();
   });
 }
@@ -1446,6 +1776,8 @@ if (startGameBtn) {
     currentPlayerIndex = 0;
     updateTurnIndicator();
     statusText.textContent = `${players[0].name} — frame your photo`;
+    updateGestureHUD();
+    playTone({ freq: 523, type: "sine", gain: 0.15, duration: 0.2 });
   });
 }
 
@@ -1453,8 +1785,76 @@ if (playAgainBtn) {
   playAgainBtn.addEventListener("click", startNewGame);
 }
 
+if (viewStripBtn) {
+  viewStripBtn.addEventListener("click", () => {
+    leaderboardModal.classList.add("hidden");
+    showStripModal();
+  });
+}
+
+// Retake Crop Click Listener
 if (retakeBtn) {
   retakeBtn.addEventListener("click", handleRetakeCrop);
 }
+
+// Save & Continue Button Click (fallback for fist gesture)
+if (saveSolveBtn) {
+  saveSolveBtn.addEventListener("click", () => {
+    if (puzzle.solved && puzzle.fullPhotoboothCanvas) {
+      shatter.pendingCanvas = puzzle.fullPhotoboothCanvas;
+      startShatter(puzzle.fullPhotoboothCanvas, puzzle.boardBox);
+    }
+  });
+}
+
+// Sound Mute Toggle
+if (soundToggleBtn) {
+  soundToggleBtn.addEventListener("click", () => {
+    soundMuted = !soundMuted;
+    soundIconOn.classList.toggle("hidden", soundMuted);
+    soundIconOff.classList.toggle("hidden", !soundMuted);
+    if (!soundMuted) {
+      playTone({ freq: 880, gain: 0.1, duration: 0.1 });
+    }
+  });
+}
+
+// Fullscreen Toggle
+if (fullscreenBtn) {
+  fullscreenBtn.addEventListener("click", () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => {});
+    } else {
+      document.exitFullscreen().catch(() => {});
+    }
+  });
+}
+
+// How to play guide modal
+if (helpBtn) {
+  helpBtn.addEventListener("click", () => helpModal.classList.remove("hidden"));
+}
+if (helpModalClose) {
+  helpModalClose.addEventListener("click", () => helpModal.classList.add("hidden"));
+}
+if (helpModalCloseIcon) {
+  helpModalCloseIcon.addEventListener("click", () => helpModal.classList.add("hidden"));
+}
+
+// Keyboard shortcuts (R for Retake, Space for Retake / Solve, Esc to close modals)
+window.addEventListener("keydown", (e) => {
+  if (e.key === "r" || e.key === "R") {
+    if (gamePhase === "playing") {
+      handleRetakeCrop();
+    }
+  } else if (e.key === "Escape") {
+    stripModal.classList.add("hidden");
+    helpModal.classList.add("hidden");
+  }
+});
+
+// Resume Web Audio on user gesture
+window.addEventListener("click", () => resumeAudio(), { once: true });
+window.addEventListener("touchstart", () => resumeAudio(), { once: true });
 
 boot();
