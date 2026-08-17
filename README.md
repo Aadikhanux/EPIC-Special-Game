@@ -1,4 +1,4 @@
-# PuzzleCam — Gesture Capture
+# EPIC Special Puzzle
 **© 2026 aiwithunnati — all rights reserved**
 
 A hand-gesture controlled photobooth puzzle game that runs entirely in your browser. No installation, no backend, no frameworks. Just your hands and a webcam.

@@ -190,7 +190,7 @@ function startRecording() {
     recorder.instance.start();
     recIndicator.classList.remove("hidden");
   } catch (err) {
-    console.warn("[PuzzleCam] MediaRecorder failed:", err);
+    console.warn("[EPIC Special Puzzle] MediaRecorder failed:", err);
   }
 }
 
@@ -205,7 +205,7 @@ function downloadVideo() {
   const url = URL.createObjectURL(recorder.blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `puzzlecam_solve_${Date.now()}.webm`;
+  link.download = `epic_puzzle_solve_${Date.now()}.webm`;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
@@ -214,6 +214,25 @@ function downloadVideo() {
 
 // ── App state ─────────────────────────────────────────────────────────────────
 let appState = "tracking";
+let gamePhase = "names";
+
+const players = [
+  { name: "Player 1", time: null, photo: null },
+  { name: "Player 2", time: null, photo: null },
+  { name: "Player 3", time: null, photo: null },
+];
+let currentPlayerIndex = 0;
+
+const nameEntryModal = document.getElementById("nameEntryModal");
+const startGameBtn = document.getElementById("startGameBtn");
+const turnIndicator = document.getElementById("turnIndicator");
+const turnText = document.getElementById("turnText");
+const retakeBtn = document.getElementById("retakeBtn");
+const leaderboardModal = document.getElementById("leaderboardModal");
+const leaderboardEntries = document.getElementById("leaderboardEntries");
+const leaderboardWinner = document.getElementById("leaderboardWinner");
+const leaderboardSubtitle = document.getElementById("leaderboardSubtitle");
+const playAgainBtn = document.getElementById("playAgainBtn");
 
 const puzzle = {
   boardBox: null,
@@ -221,6 +240,8 @@ const puzzle = {
   solved: false,
   tileW: 0,
   tileH: 0,
+  timerStartedAt: 0,
+  timerElapsed: 0,
 };
 
 const SHATTER_COLS = 6;
@@ -243,6 +264,7 @@ function addToGallery(snapshotCanvas) {
   galleryCount.textContent = `${galleryEntries.length} / ${STRIP_MAX_PHOTOS}`;
   if (galleryEmpty) galleryEmpty.style.display = "none";
   if (galleryEntries.length >= STRIP_MAX_PHOTOS) showStripComplete();
+  players[currentPlayerIndex].photo = snapshotCanvas;
 }
 
 function isStripFull() {
@@ -297,7 +319,7 @@ function downloadPhotoStrip() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `puzzlecam_strip_${Date.now()}.png`;
+    link.download = `epic_puzzle_strip_${Date.now()}.png`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -325,7 +347,13 @@ function resetEverything() {
   hideStripComplete();
   updateStripDownloadAvailability();
   resetPuzzleOnly();
-  statusText.textContent = "everything reset";
+  gamePhase = "names";
+  currentPlayerIndex = 0;
+  turnIndicator.classList.add("hidden");
+  players.forEach((p) => { p.time = null; p.photo = null; });
+  hideLeaderboard();
+  statusText.textContent = "enter player names to begin";
+  nameEntryModal.classList.remove("hidden");
 }
 
 function makePolaroid(snapshotCanvas, index) {
@@ -364,6 +392,8 @@ function resetPuzzleOnly() {
   puzzle.pieces = [];
   puzzle.solved = false;
   puzzle.fullPhotoboothCanvas = null;
+  puzzle.timerStartedAt = 0;
+  puzzle.timerElapsed = 0;
   appState = "tracking";
   countdown.active = false;
   drag.activeHand = null;
@@ -375,9 +405,101 @@ function resetPuzzleOnly() {
   lastSeenFrame.box = null;
   lastSeenFrame.at = 0;
   lastCountdownN = -1;
+  freezeGate.holding = false;
   stopRecording();
   recIndicator.classList.add("hidden");
   updateProgressBadge();
+}
+
+function updateTurnIndicator() {
+  if (gamePhase === "playing") {
+    turnIndicator.classList.remove("hidden");
+    turnText.textContent = `${players[currentPlayerIndex].name}`;
+  } else {
+    turnIndicator.classList.add("hidden");
+  }
+}
+
+function advanceToNextPlayer() {
+  currentPlayerIndex++;
+  if (currentPlayerIndex >= players.length) {
+    gamePhase = "results";
+    turnIndicator.classList.add("hidden");
+    showLeaderboard();
+    return;
+  }
+  updateTurnIndicator();
+}
+
+function formatTime(seconds) {
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  const ms = Math.floor((seconds * 10) % 10);
+  return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}.${ms}`;
+}
+
+function showLeaderboard() {
+  const sorted = [...players].sort((a, b) => (a.time ?? Infinity) - (b.time ?? Infinity));
+  leaderboardEntries.innerHTML = "";
+  const medals = ["gold", "silver", "bronze"];
+  sorted.forEach((p, i) => {
+    const row = document.createElement("div");
+    row.className = `leaderboard-row ${medals[i] || ""}`;
+    const rank = document.createElement("span");
+    rank.className = "leaderboard-rank";
+    rank.textContent = `#${i + 1}`;
+    const name = document.createElement("span");
+    name.className = "leaderboard-name";
+    name.textContent = p.name;
+    const time = document.createElement("span");
+    time.className = "leaderboard-time";
+    time.textContent = p.time != null ? formatTime(p.time) : "DNF";
+    row.appendChild(rank);
+    row.appendChild(name);
+    row.appendChild(time);
+    leaderboardEntries.appendChild(row);
+  });
+  const winner = sorted[0];
+  leaderboardSubtitle.textContent = `All ${players.length} players completed!`;
+  leaderboardWinner.textContent = winner && winner.time != null
+    ? `${winner.name} wins with ${formatTime(winner.time)}!`
+    : "No winner";
+  leaderboardModal.classList.remove("hidden");
+}
+
+function hideLeaderboard() {
+  leaderboardModal.classList.add("hidden");
+}
+
+function handleRetakeCrop() {
+  if (appState === "tracking" || appState === "countdown") {
+    resetPuzzleOnly();
+    lastSeenFrame.box = null;
+    lastSeenFrame.at = 0;
+    triggerFlash();
+    playTone({ freq: 660, type: "square", gain: 0.12, attack: 0.001, decay: 0.08, duration: 0.1 });
+    statusText.textContent = gamePhase === "playing" ? `${players[currentPlayerIndex]?.name || "Player"} — frame your photo again` : "frame your photo again";
+    retakeBtn.classList.remove("hidden");
+  }
+}
+
+function startNewGame() {
+  players.forEach((p) => { p.time = null; p.photo = null; });
+  currentPlayerIndex = 0;
+  gamePhase = "playing";
+  galleryEntries.length = 0;
+  galleryStrip.innerHTML = "";
+  galleryCount.textContent = `0 / ${STRIP_MAX_PHOTOS}`;
+  if (galleryEmpty) {
+    galleryEmpty.style.display = "block";
+    galleryStrip.appendChild(galleryEmpty);
+  }
+  hideStripComplete();
+  updateStripDownloadAvailability();
+  hideLeaderboard();
+  resetPuzzleOnly();
+  updateTurnIndicator();
+  statusText.textContent = "ready";
 }
 
 function fitCanvasToWindow() {
@@ -460,7 +582,7 @@ async function initHandLandmarker() {
     );
     return handLandmarker;
   } catch (gpuErr) {
-    console.warn("[PuzzleCam] GPU delegate failed, retrying with CPU…", gpuErr);
+    console.warn("[EPIC Special Puzzle] GPU delegate failed, retrying with CPU…", gpuErr);
   }
   try {
     const handLandmarker = await withTimeout(
@@ -581,7 +703,7 @@ function drawCountdownOverlay(box) {
   ctx.fillText(String(n), cx, cy);
   ctx.restore();
 
-  statusText.textContent = `capturing in ${n}…`;
+  statusText.textContent = `${players[currentPlayerIndex]?.name || "Player"} — capturing in ${n}…`;
 }
 
 function gaussianNoise(std) {
@@ -691,8 +813,11 @@ function finishCountdownAndCapture(box) {
   puzzle.tileW = tileW;
   puzzle.tileH = tileH;
   puzzle.solved = pieces.every((p) => p.placed);
+  puzzle.timerStartedAt = performance.now();
+  puzzle.timerElapsed = 0;
   appState = "puzzle";
   fistHoldCounter = 0;
+  retakeBtn.classList.add("hidden");
   updateProgressBadge();
   playTone({ freq: 220, type: "sine", gain: 0.15, attack: 0.001, decay: 0.08, duration: 0.1 });
   startRecording();
@@ -788,7 +913,7 @@ function findNearestPiece(px, py) {
   let best = null;
   let bestDist = Infinity;
   for (const piece of puzzle.pieces) {
-    if (piece.displacing) continue;
+    if (piece.displacing || piece.placed) continue;
     const cx = piece.x + piece.w / 2;
     const cy = piece.y + piece.h / 2;
     const d = Math.hypot(px - cx, py - cy);
@@ -891,9 +1016,26 @@ function drawBoardAndPieces() {
     ctx.fillStyle = "#5fae6e";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText("COMPLETE! — fist to save", box.x + box.width / 2, box.y + box.height / 2);
+    const pname = players[currentPlayerIndex]?.name || "Player";
+    ctx.fillText(`${pname} — COMPLETE!`, box.x + box.width / 2, box.y + box.height / 2 - box.height * 0.04);
+    ctx.font = `${Math.max(12, box.width * 0.035)}px 'IBM Plex Mono', monospace`;
+    ctx.fillText(`Time: ${formatTime(puzzle.timerElapsed)}`, box.x + box.width / 2, box.y + box.height / 2 + box.height * 0.04);
+    ctx.font = `${Math.max(10, box.width * 0.028)}px 'IBM Plex Mono', monospace`;
+    ctx.fillText("fist to save", box.x + box.width / 2, box.y + box.height / 2 + box.height * 0.08);
     ctx.restore();
   }
+
+  if (!puzzle.solved && puzzle.timerStartedAt) {
+    puzzle.timerElapsed = (performance.now() - puzzle.timerStartedAt) / 1000;
+  }
+  const timeStr = formatTime(puzzle.timerElapsed);
+  ctx.save();
+  ctx.font = `bold ${Math.max(16, box.width * 0.045)}px 'IBM Plex Mono', monospace`;
+  ctx.textAlign = "right";
+  ctx.textBaseline = "top";
+  ctx.fillStyle = puzzle.solved ? "#5fae6e" : "#f5c518";
+  ctx.fillText(timeStr, box.x + box.width - 8, box.y + 8);
+  ctx.restore();
 }
 
 function updateProgressBadge() {
@@ -1060,7 +1202,9 @@ function finishShatter() {
     shatter.pendingCanvas = null;
     soundSaved();
   }
+  players[currentPlayerIndex].time = puzzle.timerElapsed;
   resetPuzzleOnly();
+  advanceToNextPlayer();
 }
 
 function handleFistReset() {
@@ -1104,15 +1248,19 @@ function processResults(result) {
         applyColorInsideBox(lastSeenFrame.box);
         drawLiveFrameOverlay(lastSeenFrame.box);
       }
-      statusText.textContent = isStripFull() ? "strip complete — download or reset" : "looking for hands…";
+      statusText.textContent = gamePhase === "playing" ? `${players[currentPlayerIndex]?.name || "Player"} — frame your photo` : (isStripFull() ? "strip complete — download or reset" : "looking for hands…");
+      if (gamePhase === "playing") retakeBtn.classList.remove("hidden");
       return;
     }
-    if (appState === "countdown") { drawCountdownOverlay(puzzle.boardBox); return; }
+    if (appState === "countdown") {
+      if (gamePhase === "playing") retakeBtn.classList.remove("hidden");
+      drawCountdownOverlay(puzzle.boardBox); return;
+    }
     if (appState === "puzzle") {
       puzzle.solved = reconcilePlacedState(puzzle.boardBox, puzzle.tileW, puzzle.tileH);
       updateProgressBadge();
       drawBoardAndPieces();
-      statusText.textContent = puzzle.solved ? "puzzle complete! make a fist to save" : "arrange the puzzle with pinch";
+      statusText.textContent = puzzle.solved ? `${players[currentPlayerIndex]?.name || "Player"} — puzzle complete! make a fist to save` : `${players[currentPlayerIndex]?.name || "Player"} — arrange the puzzle with pinch`;
       return;
     }
     return;
@@ -1141,6 +1289,7 @@ function processResults(result) {
         drawLiveFrameOverlay(frameBox);
         lastSeenFrame.box = frameBox;
         lastSeenFrame.at = performance.now();
+        retakeBtn.classList.remove("hidden");
       }
       const bothPinching = isPinching(handA) && isPinching(handB);
       if (bothPinching && frameBox.width > 40 && frameBox.height > 40) {
@@ -1159,7 +1308,7 @@ function processResults(result) {
         applyColorInsideBox(lastSeenFrame.box);
         drawLiveFrameOverlay(lastSeenFrame.box);
       }
-      statusText.textContent = "hands tracking";
+      statusText.textContent = gamePhase === "playing" ? `${players[currentPlayerIndex]?.name || "Player"} — show 2 hands` : "hands tracking";
     }
     return;
   }
@@ -1185,8 +1334,8 @@ function processResults(result) {
     drawBoardAndPieces();
     drawHandSkeletonsOverBoard(handsLandmarks, puzzle.boardBox);
     statusText.textContent = puzzle.solved
-      ? (fistHoldCounter > 0 ? `saving… hold fist (${fistHoldCounter}/${FIST_HOLD_FRAMES})` : "puzzle complete! make a fist to save")
-      : "arrange the puzzle with pinch";
+      ? (fistHoldCounter > 0 ? `${players[currentPlayerIndex]?.name || "Player"} — saving… hold fist (${fistHoldCounter}/${FIST_HOLD_FRAMES})` : `${players[currentPlayerIndex]?.name || "Player"} — puzzle complete! make a fist to save`)
+      : `${players[currentPlayerIndex]?.name || "Player"} — arrange the puzzle with pinch`;
   }
 }
 
@@ -1232,8 +1381,9 @@ async function boot() {
     settled = true;
     clearTimeout(watchdog);
     loadingOverlay.classList.add("hidden");
-    statusText.textContent = "ready";
+    statusText.textContent = "enter player names to begin";
     requestAnimationFrame(renderLoop);
+    nameEntryModal.classList.remove("hidden");
   } catch (err) {
     settled = true;
     clearTimeout(watchdog);
@@ -1278,6 +1428,33 @@ if (resetAllBtn) {
     const confirmed = window.confirm("Are you sure you want to delete the entire photo strip and start over?");
     if (confirmed) resetEverything();
   });
+}
+
+if (startGameBtn) {
+  startGameBtn.addEventListener("click", () => {
+    const inputs = [
+      document.getElementById("playerName1"),
+      document.getElementById("playerName2"),
+      document.getElementById("playerName3"),
+    ];
+    inputs.forEach((input, i) => {
+      const val = input.value.trim();
+      players[i].name = val || `Player ${i + 1}`;
+    });
+    nameEntryModal.classList.add("hidden");
+    gamePhase = "playing";
+    currentPlayerIndex = 0;
+    updateTurnIndicator();
+    statusText.textContent = `${players[0].name} — frame your photo`;
+  });
+}
+
+if (playAgainBtn) {
+  playAgainBtn.addEventListener("click", startNewGame);
+}
+
+if (retakeBtn) {
+  retakeBtn.addEventListener("click", handleRetakeCrop);
 }
 
 boot();
