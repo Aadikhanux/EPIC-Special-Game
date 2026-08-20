@@ -107,6 +107,8 @@ const helpModal = document.getElementById("helpModal");
 const helpModalClose = document.getElementById("helpModalClose");
 const helpModalCloseIcon = document.getElementById("helpModalCloseIcon");
 
+const lobbyPlayerName = document.getElementById("lobbyPlayerName");
+
 const tsState = document.getElementById("tsState");
 const tsPlayers = document.getElementById("tsPlayers");
 const tsElapsed = document.getElementById("tsElapsed");
@@ -369,6 +371,7 @@ function handleServerMessage(msg) {
     case "PLAYER_REGISTERED":
       myPlayer.id = msg.playerId;
       myPlayer.name = msg.name;
+      if (lobbyPlayerName) lobbyPlayerName.textContent = msg.name;
       serverTournamentState = msg.tournamentState || "LOBBY";
       updateTournamentStateUI(serverTournamentState, msg.stats, msg.elapsed);
 
@@ -376,7 +379,7 @@ function handleServerMessage(msg) {
       if (serverTournamentState !== "ACTIVE") {
         lobbyModal.classList.remove("hidden");
         statusDot.className = "status-dot";
-        statusText.textContent = "🔒 Contest locked — waiting for admin";
+        statusText.textContent = "🚀 Contest about to start — waiting for admin";
       } else {
         lobbyModal.classList.add("hidden");
         statusDot.className = "status-dot live";

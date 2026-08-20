@@ -274,8 +274,8 @@
   </div>
 </div>
 
-<!-- Strict Locked Lobby Modal (Appears before admin starts) -->
-<div id="lobbyModal" class="modal-overlay hidden">
+<!-- Full-Screen About To Start Lounge Screen (Appears before admin starts) -->
+<div id="lobbyModal" class="modal-overlay lobby-overlay-fullscreen hidden">
   <div class="modal-card lobby-card">
     <div class="lobby-radar">
       <div class="radar-ring"></div>
@@ -283,13 +283,18 @@
       <div class="radar-ring r3"></div>
       <div class="radar-dot"></div>
     </div>
-    <div class="modal-badge lock-badge">🔒 CONTEST LOCKED</div>
-    <h2 class="modal-title" id="lobbyTitle">Waiting for Admin to Start</h2>
-    <p class="modal-subtitle" id="lobbySubtitle">The contest has not started yet. Please wait for the host to press START in Mission Control.</p>
+    <div class="modal-badge lock-badge">🚀 CONTEST ABOUT TO START</div>
+    <h2 class="modal-title" id="lobbyTitle">GET READY!</h2>
+    <p class="modal-subtitle" id="lobbySubtitle">The host is preparing the competition. The game will automatically launch on your screen when the host starts!</p>
+
+    <div class="lobby-player-badge" id="lobbyPlayerBadge">
+      <span class="lpb-icon">👤</span>
+      <span class="lpb-text">Playing as: <strong id="lobbyPlayerName">Player</strong></span>
+    </div>
 
     <div class="lobby-player-count">
-      <span class="lobby-count-num" id="lobbyPlayerCount">0</span>
-      <span class="lobby-count-label">PLAYERS IN LOBBY</span>
+      <span class="lobby-count-num" id="lobbyPlayerCount">1</span>
+      <span class="lobby-count-label">PLAYERS READY IN LOBBY</span>
     </div>
 
     <div id="lobbyAnnounce" class="lobby-announce hidden">
