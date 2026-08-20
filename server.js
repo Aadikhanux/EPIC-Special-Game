@@ -382,7 +382,9 @@ wss.on("connection", (ws, req) => {
 
       // ── Admin Authentication ──
       case "ADMIN_AUTH": {
-        if (msg.pin === ADMIN_PIN) {
+        const inputPin = (msg.pin || "").trim().toLowerCase();
+        const validPin = (ADMIN_PIN || "epic2026").trim().toLowerCase();
+        if (inputPin === validPin) {
           isAdmin = true;
           adminClients.add(ws);
           ws.send(JSON.stringify({
@@ -395,7 +397,7 @@ wss.on("connection", (ws, req) => {
             timerDuration: tournamentTimerDuration,
             announcement: adminAnnouncement,
           }));
-          console.log("[ADMIN] Admin authenticated.");
+          console.log("[ADMIN] Admin authenticated successfully.");
         } else {
           ws.send(JSON.stringify({ type: "ADMIN_AUTH_FAIL" }));
         }
