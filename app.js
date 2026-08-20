@@ -535,6 +535,26 @@ function handleServerMessage(msg) {
       statusText.textContent = "🔒 Contest reset — waiting in lobby";
       break;
 
+    case "FULL_RESET":
+      serverTournamentState = "LOBBY";
+      myPlayer.id = null;
+      myPlayer.name = "";
+      myPlayer.solveTime = null;
+      myPlayer.rank = null;
+      globalLeaderboard = [];
+      renderSidebarLeaderboard([]);
+      rankBadge.classList.add("hidden");
+      solveResultModal.classList.add("hidden");
+      endedModal.classList.add("hidden");
+      lobbyModal.classList.add("hidden");
+      resetPuzzleOnly();
+      if (nameInput) nameInput.value = "";
+      nameEntryModal.classList.remove("hidden");
+      statusDot.className = "status-dot";
+      statusText.textContent = "Contest reset — enter your name";
+      updateTournamentStateUI("LOBBY", msg.stats);
+      break;
+
     case "LEADERBOARD_UPDATE":
       globalLeaderboard = msg.leaderboard || [];
       renderSidebarLeaderboard(globalLeaderboard);

@@ -224,18 +224,17 @@ function doLeaderboardBroadcast() {
 // ── Tournament Controls ───────────────────────────────────────────────────────
 function startTournament() {
   if (tournamentState === "ACTIVE") return;
-  const wasEnded = (tournamentState === "ENDED");
   tournamentState = "ACTIVE";
   tournamentStartedAt = Date.now();
   tournamentEndedAt = null;
 
-  // Set all connected players to "playing" (and reset solveTime if restarted after end)
-  for (const [, p] of players) {
-    if (p.connected) {
+  // Prune disconnected players from previous sessions and reset active players
+  for (const [id, p] of Array.from(players.entries())) {
+    if (!p.connected) {
+      players.delete(id);
+    } else {
+      p.solveTime = null;
       p.status = "playing";
-      if (wasEnded) {
-        p.solveTime = null;
-      }
     }
   }
 
@@ -244,7 +243,17 @@ function startTournament() {
     tournamentTimerInterval = null;
   }
 
-  broadcast({ type: "TOURNAMENT_START", timestamp: tournamentStartedAt });
+  const leaderboard = getLeaderboard();
+  const stats = getTournamentStats();
+
+  broadcast({
+    type: "TOURNAMENT_START",
+    timestamp: tournamentStartedAt,
+    leaderboard,
+    stats,
+    elapsed: 0,
+    remaining: getRemainingSeconds(),
+  });
   doLeaderboardBroadcast();
   broadcastTournamentState();
 
@@ -263,7 +272,7 @@ function startTournament() {
     }
   }, 1000);
 
-  console.log(`[TOURNAMENT] Started! ${players.size} players registered.`);
+  console.log(`[TOURNAMENT] Started fresh! ${players.size} players registered.`);
 }
 
 function stopTournament() {
@@ -310,16 +319,26 @@ function resetTournament() {
     tournamentTimerInterval = null;
   }
 
-  // Reset all player solve data but keep registrations
-  for (const [, p] of players) {
-    p.solveTime = null;
-    p.status = p.connected ? "waiting" : "disconnected";
+  // Prune disconnected players and reset solve data for connected players
+  for (const [id, p] of Array.from(players.entries())) {
+    if (!p.connected) {
+      players.delete(id);
+    } else {
+      p.solveTime = null;
+      p.status = "waiting";
+    }
   }
 
   const leaderboard = getLeaderboard();
   const stats = getTournamentStats();
 
-  broadcast({ type: "TOURNAMENT_RESET", leaderboard, stats });
+  broadcast({
+    type: "TOURNAMENT_RESET",
+    leaderboard,
+    stats,
+    elapsed: 0,
+    remaining: null,
+  });
   doLeaderboardBroadcast();
   broadcastTournamentState();
   console.log(`[TOURNAMENT] Reset. ${players.size} players back to lobby.`);
@@ -337,11 +356,21 @@ function fullReset() {
     tournamentTimerInterval = null;
   }
 
-  // Disconnect all players
+  // Clear all player data
   players.clear();
   wsToPlayer.clear();
 
-  broadcast({ type: "FULL_RESET" });
+  const stats = getTournamentStats();
+  const leaderboard = getLeaderboard();
+
+  broadcast({
+    type: "FULL_RESET",
+    leaderboard,
+    stats,
+    elapsed: 0,
+    remaining: null,
+  });
+  broadcastTournamentState();
   console.log("[TOURNAMENT] Full reset. All players cleared.");
 }
 

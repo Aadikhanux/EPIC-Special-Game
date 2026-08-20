@@ -281,6 +281,7 @@
     <button id="startBtn" class="ctrl-btn start">▶ START TOURNAMENT</button>
     <button id="stopBtn" class="ctrl-btn stop" disabled>■ STOP TOURNAMENT</button>
     <button id="resetBtn" class="ctrl-btn reset">↻ RESET SCORES</button>
+    <button id="fullResetBtn" class="ctrl-btn secondary" style="border-color:rgba(255,71,87,0.4); color:var(--coral);">🗑 CLEAR ALL PLAYERS</button>
     <button id="csvBtn" class="ctrl-btn secondary">📊 EXPORT CSV</button>
   </div>
 
@@ -335,6 +336,7 @@
   const startBtn = document.getElementById("startBtn");
   const stopBtn = document.getElementById("stopBtn");
   const resetBtn = document.getElementById("resetBtn");
+  const fullResetBtn = document.getElementById("fullResetBtn");
   const csvBtn = document.getElementById("csvBtn");
   const setTimerBtn = document.getElementById("setTimerBtn");
   const timerInput = document.getElementById("timerInput");
@@ -458,6 +460,13 @@
 
       case "TOURNAMENT_START":
         updateState("ACTIVE");
+        activeElapsedSeconds = msg.elapsed || 0;
+        updateTimerDisplay(activeElapsedSeconds, msg.remaining);
+        if (msg.stats) updateStats(msg.stats);
+        if (msg.leaderboard) {
+          currentLeaderboard = msg.leaderboard;
+          renderLeaderboard(currentLeaderboard);
+        }
         break;
 
       case "TOURNAMENT_END":
@@ -466,15 +475,28 @@
           currentLeaderboard = msg.leaderboard;
           renderLeaderboard(currentLeaderboard);
         }
-        updateStats(msg.stats);
+        if (msg.stats) updateStats(msg.stats);
+        if (msg.elapsed != null) updateTimerDisplay(msg.elapsed, 0);
         break;
 
       case "TOURNAMENT_RESET":
         updateState("LOBBY");
+        activeElapsedSeconds = 0;
+        updateTimerDisplay(0, null);
+        if (msg.stats) updateStats(msg.stats);
         if (msg.leaderboard) {
           currentLeaderboard = msg.leaderboard;
           renderLeaderboard(currentLeaderboard);
         }
+        break;
+
+      case "FULL_RESET":
+        updateState("LOBBY");
+        activeElapsedSeconds = 0;
+        updateTimerDisplay(0, null);
+        currentLeaderboard = msg.leaderboard || [];
+        renderLeaderboard(currentLeaderboard);
+        updateStats(msg.stats || { connected: 0, totalPlayers: 0, solved: 0, playing: 0, fastestTime: null, avgTime: null });
         break;
 
       case "CSV_DATA":
@@ -494,15 +516,8 @@
     startBtn.disabled = (state === "ACTIVE");
     stopBtn.disabled = (state !== "ACTIVE");
 
-    if (state === "ACTIVE" || state === "ENDED") {
-      timerDisplay.style.display = "flex";
-    } else {
-      timerDisplay.style.display = "none";
-      activeElapsedSeconds = 0;
-      updateTimerDisplay(0, null);
-    }
-
     if (state === "ACTIVE") {
+      timerDisplay.style.display = "flex";
       if (!adminTimerInterval) {
         adminTimerInterval = setInterval(() => {
           if (currentState === "ACTIVE") {
@@ -514,20 +529,29 @@
           }
         }, 1000);
       }
-    } else {
+    } else if (state === "ENDED") {
+      timerDisplay.style.display = "flex";
       if (adminTimerInterval) {
         clearInterval(adminTimerInterval);
         adminTimerInterval = null;
       }
+    } else { // LOBBY
+      timerDisplay.style.display = "none";
+      if (adminTimerInterval) {
+        clearInterval(adminTimerInterval);
+        adminTimerInterval = null;
+      }
+      activeElapsedSeconds = 0;
+      updateTimerDisplay(0, null);
     }
   }
 
   function updateStats(stats) {
     if (!stats) return;
-    statConnected.textContent = stats.connected || 0;
-    statTotal.textContent = stats.totalPlayers || 0;
-    statSolved.textContent = stats.solved || 0;
-    statPlaying.textContent = stats.playing || 0;
+    statConnected.textContent = stats.connected != null ? stats.connected : 0;
+    statTotal.textContent = stats.totalPlayers != null ? stats.totalPlayers : 0;
+    statSolved.textContent = stats.solved != null ? stats.solved : 0;
+    statPlaying.textContent = stats.playing != null ? stats.playing : 0;
     statFastest.textContent = stats.fastestTime != null ? formatTimeSolve(stats.fastestTime) : "—";
     statAvgTime.textContent = stats.avgTime != null ? formatTimeSolve(stats.avgTime) : "—";
   }
@@ -652,6 +676,11 @@
   resetBtn.addEventListener("click", () => {
     if (confirm("Reset all scores? Player registrations will be kept.")) {
       sendMsg({ type: "ADMIN_RESET" });
+    }
+  });
+  fullResetBtn.addEventListener("click", () => {
+    if (confirm("Clear all players and reset everything to a fresh contest? All players will be disconnected and removed.")) {
+      sendMsg({ type: "ADMIN_FULL_RESET" });
     }
   });
   csvBtn.addEventListener("click", () => sendMsg({ type: "ADMIN_GET_CSV" }));
