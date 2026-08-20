@@ -33,12 +33,11 @@
           </svg>
           <span class="brand-text">EPIC SPECIAL</span>
         </div>
-        <span class="brand-tag">500 PLAYERS • LIVE CONTEST</span>
       </div>
 
       <!-- Live Tournament Rank Badge -->
       <div id="rankBadge" class="rank-badge hidden">
-        <span class="rank-label">YOUR RANK</span>
+        <span class="rank-label">RANK</span>
         <span id="rankValue" class="rank-value">#—</span>
       </div>
 
@@ -52,35 +51,11 @@
 
       <!-- Quick Action Controls -->
       <div class="hud-actions">
-        <button type="button" id="snapBtn" class="hud-btn snap-btn" title="Snap Photo Now (Space / S)">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
-            <circle cx="12" cy="13" r="4"></circle>
-          </svg>
-          <span>SNAP PHOTO</span>
-        </button>
-
-        <button type="button" id="retakeBtn" class="hud-btn retake-btn" title="Recapture Photo Crop (Hotkey: R)">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M1 4v6h6"></path>
-            <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
-          </svg>
-          <span>RECAPTURE</span>
-        </button>
-
-        <button type="button" id="mobileLbToggleBtn" class="hud-btn hud-btn--icon mobile-only" title="Toggle Live Leaderboard Drawer">
+        <button type="button" id="mobileLbToggleBtn" class="hud-btn hud-btn--icon mobile-only" title="Live Leaderboard">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <line x1="18" y1="20" x2="18" y2="10"></line>
             <line x1="12" y1="20" x2="12" y2="4"></line>
             <line x1="6" y1="20" x2="6" y2="14"></line>
-          </svg>
-        </button>
-
-        <button type="button" id="helpBtn" class="hud-btn hud-btn--icon" title="How to Play / Gestures Guide">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="10"></circle>
-            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
-            <line x1="12" y1="17" x2="12.01" y2="17"></line>
           </svg>
         </button>
 
@@ -111,54 +86,39 @@
       </div>
     </div>
 
-    <!-- Recording Indicator -->
-    <div id="recIndicator" class="rec-indicator hidden">
-      <span class="rec-dot"></span>
-      <span class="rec-label">REC SOLVE</span>
-    </div>
-
     <!-- Live Announcement Banner -->
     <div id="announceBanner" class="announce-banner hidden">
       <span class="announce-icon">📢</span>
       <span id="announceText" class="announce-text"></span>
     </div>
 
-    <!-- Bottom Gesture & Mobile Controls HUD -->
+    <!-- Bottom Snap HUD -->
     <div class="hud-bottom">
-      <div class="gesture-pill" id="gesturePill">
-        <div class="gesture-icon" id="gestureIcon">👤</div>
-        <div class="gesture-desc">
-          <span class="gesture-title" id="gestureTitle">AI FACE TRACKING</span>
-          <span class="gesture-hint" id="gestureHint">Center face in camera to frame photo</span>
-        </div>
-      </div>
-
-      <!-- Mobile Floating Snap Button -->
-      <button type="button" id="mobileSnapBtn" class="mobile-snap-btn" title="Snap Photo Now">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <button type="button" id="snapBtn" class="hud-snap-main-btn" title="Snap Photo">
+        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
           <circle cx="12" cy="13" r="4"></circle>
         </svg>
-        <span>SNAP</span>
+        <span>SNAP PHOTO</span>
       </button>
 
       <!-- Save & Submit Action when Solved -->
       <button type="button" id="saveSolveBtn" class="save-solve-btn hidden">
-        <span class="save-btn-fist">✊</span>
+        <span class="save-btn-fist">🏆</span>
         <span>SUBMIT TIME</span>
       </button>
     </div>
 
     <!-- Loading Overlay -->
-    <div id="loadingOverlay">
+    <div id="loadingOverlay" class="hidden">
       <div class="loader-card">
         <div class="loader-spinner"></div>
-        <div class="loader-title">INITIALIZING PHOTOBOOTH</div>
-        <div class="loader-text" id="loaderText">Loading AI Face & Hand neural models…</div>
+        <div class="loader-title">INITIALIZING CAMERA</div>
+        <div class="loader-text" id="loaderText">Loading neural models…</div>
         <div class="loader-bar-wrap">
           <div class="loader-bar"></div>
         </div>
-        <button type="button" id="loaderRetry" class="loader-retry hidden">RETRY CONNECTION</button>
+        <button type="button" id="loaderRetry" class="loader-retry hidden">RETRY</button>
       </div>
     </div>
 
@@ -204,26 +164,6 @@
         <div class="empty-title">No Solves Yet</div>
         <div class="empty-desc">Compete to appear on the live leaderboard. Fastest time wins!</div>
       </div>
-    </div>
-
-    <!-- Gallery Action Controls -->
-    <div class="gallery-actions">
-      <button type="button" id="downloadStripBtn" class="gallery-action-btn gallery-action-btn--primary" disabled>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-          <polyline points="7 10 12 15 17 10"></polyline>
-          <line x1="12" y1="15" x2="12" y2="3"></line>
-        </svg>
-        <span>DOWNLOAD MY PHOTO</span>
-      </button>
-
-      <button type="button" id="downloadVideoBtn" class="gallery-action-btn gallery-action-btn--secondary" disabled>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polygon points="23 7 16 12 23 17 23 7"></polygon>
-          <rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
-        </svg>
-        <span>DOWNLOAD VIDEO</span>
-      </button>
     </div>
   </aside>
 

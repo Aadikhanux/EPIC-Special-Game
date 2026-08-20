@@ -60,6 +60,30 @@ function generatePlayerId() {
   return `P${String(nextPlayerId++).padStart(4, "0")}`;
 }
 
+function getUniquePlayerName(requestedName, excludePlayerId = null) {
+  let base = (requestedName || "Player").trim().slice(0, 24);
+  if (!base) base = "Player";
+
+  const existingNames = new Set();
+  for (const [id, p] of players) {
+    if (id !== excludePlayerId && p.name) {
+      existingNames.add(p.name.toLowerCase());
+    }
+  }
+
+  if (!existingNames.has(base.toLowerCase())) {
+    return base;
+  }
+
+  let counter = 2;
+  let candidate = `${base} ${counter}`;
+  while (existingNames.has(candidate.toLowerCase())) {
+    counter++;
+    candidate = `${base} ${counter}`;
+  }
+  return candidate;
+}
+
 function getLeaderboard() {
   const entries = [];
   for (const [id, p] of players) {
@@ -156,13 +180,16 @@ function broadcastToAdmins(data) {
 }
 
 function broadcastTournamentState() {
+  const stats = getTournamentStats();
+  const leaderboard = getLeaderboard();
   const stateMsg = {
     type: "TOURNAMENT_STATE",
     state: tournamentState,
     elapsed: getElapsedSeconds(),
     remaining: getRemainingSeconds(),
     timerDuration: tournamentTimerDuration,
-    stats: getTournamentStats(),
+    stats,
+    leaderboard,
     announcement: adminAnnouncement,
   };
   broadcast(stateMsg);
@@ -197,32 +224,44 @@ function doLeaderboardBroadcast() {
 // ── Tournament Controls ───────────────────────────────────────────────────────
 function startTournament() {
   if (tournamentState === "ACTIVE") return;
+  const wasEnded = (tournamentState === "ENDED");
   tournamentState = "ACTIVE";
   tournamentStartedAt = Date.now();
   tournamentEndedAt = null;
 
-  // Set all connected waiting players to "playing"
+  // Set all connected players to "playing" (and reset solveTime if restarted after end)
   for (const [, p] of players) {
-    if (p.connected && p.status === "waiting") {
+    if (p.connected) {
       p.status = "playing";
+      if (wasEnded) {
+        p.solveTime = null;
+      }
     }
   }
 
+  if (tournamentTimerInterval) {
+    clearInterval(tournamentTimerInterval);
+    tournamentTimerInterval = null;
+  }
+
   broadcast({ type: "TOURNAMENT_START", timestamp: tournamentStartedAt });
+  doLeaderboardBroadcast();
   broadcastTournamentState();
 
-  // Timer countdown auto-stop
-  if (tournamentTimerDuration > 0) {
-    if (tournamentTimerInterval) clearInterval(tournamentTimerInterval);
-    tournamentTimerInterval = setInterval(() => {
-      const remaining = getRemainingSeconds();
-      if (remaining != null && remaining <= 0) {
-        stopTournament();
-      } else {
-        broadcastTournamentState();
-      }
-    }, 1000);
-  }
+  // Timer broadcast & auto-stop interval (ticks every 1s)
+  tournamentTimerInterval = setInterval(() => {
+    if (tournamentState !== "ACTIVE") {
+      if (tournamentTimerInterval) clearInterval(tournamentTimerInterval);
+      tournamentTimerInterval = null;
+      return;
+    }
+    const remaining = getRemainingSeconds();
+    if (tournamentTimerDuration > 0 && remaining != null && remaining <= 0) {
+      stopTournament();
+    } else {
+      broadcastTournamentState();
+    }
+  }, 1000);
 
   console.log(`[TOURNAMENT] Started! ${players.size} players registered.`);
 }
@@ -237,7 +276,7 @@ function stopTournament() {
     tournamentTimerInterval = null;
   }
 
-  // Mark remaining playing players as their current status
+  // Mark remaining playing players as waiting
   for (const [, p] of players) {
     if (p.status === "playing") {
       p.status = "waiting"; // didn't finish
@@ -245,14 +284,19 @@ function stopTournament() {
   }
 
   const leaderboard = getLeaderboard();
+  const stats = getTournamentStats();
+  const elapsed = getElapsedSeconds();
+
   broadcast({
     type: "TOURNAMENT_END",
     leaderboard,
-    stats: getTournamentStats(),
-    elapsed: getElapsedSeconds(),
+    stats,
+    elapsed,
   });
+  doLeaderboardBroadcast();
+  broadcastTournamentState();
 
-  console.log(`[TOURNAMENT] Ended. ${getTournamentStats().solved} players solved.`);
+  console.log(`[TOURNAMENT] Ended. ${stats.solved} players solved.`);
 }
 
 function resetTournament() {
@@ -272,9 +316,13 @@ function resetTournament() {
     p.status = p.connected ? "waiting" : "disconnected";
   }
 
-  broadcast({ type: "TOURNAMENT_RESET" });
+  const leaderboard = getLeaderboard();
+  const stats = getTournamentStats();
+
+  broadcast({ type: "TOURNAMENT_RESET", leaderboard, stats });
+  doLeaderboardBroadcast();
   broadcastTournamentState();
-  console.log("[TOURNAMENT] Reset. All players back to lobby.");
+  console.log(`[TOURNAMENT] Reset. ${players.size} players back to lobby.`);
 }
 
 function fullReset() {
@@ -317,8 +365,11 @@ wss.on("connection", (ws, req) => {
     switch (msg.type) {
       // ── Player Registration ──
       case "PLAYER_JOIN": {
-        const name = (msg.name || "Anonymous").trim().slice(0, 24);
-        playerId = generatePlayerId();
+        const rawName = (msg.name || "Player").trim().slice(0, 24);
+        if (!playerId || !players.has(playerId)) {
+          playerId = generatePlayerId();
+        }
+        const name = getUniquePlayerName(rawName, playerId);
         players.set(playerId, {
           name,
           solveTime: null,
@@ -328,6 +379,9 @@ wss.on("connection", (ws, req) => {
         });
         wsToPlayer.set(ws, playerId);
 
+        const stats = getTournamentStats();
+        const leaderboard = getLeaderboard();
+
         ws.send(JSON.stringify({
           type: "PLAYER_REGISTERED",
           playerId,
@@ -336,14 +390,15 @@ wss.on("connection", (ws, req) => {
           elapsed: getElapsedSeconds(),
           remaining: getRemainingSeconds(),
           timerDuration: tournamentTimerDuration,
-          stats: getTournamentStats(),
+          stats,
+          leaderboard,
           announcement: adminAnnouncement,
         }));
 
-        // Broadcast updated stats to everyone
-        scheduleLeaderboardBroadcast();
+        // Broadcast updated stats & leaderboard to everyone immediately
+        doLeaderboardBroadcast();
         broadcastTournamentState();
-        console.log(`[PLAYER] ${name} joined as ${playerId}. Total: ${players.size}`);
+        console.log(`[PLAYER] "${name}" (${playerId}) joined lobby. Connected: ${stats.connected}/${players.size}`);
         break;
       }
 

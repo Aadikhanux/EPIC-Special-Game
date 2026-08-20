@@ -57,8 +57,6 @@ const galleryStrip = document.getElementById("galleryStrip");
 const galleryEmpty = document.getElementById("galleryEmpty");
 const galleryCount = document.getElementById("galleryCount");
 const downloadStripBtn = document.getElementById("downloadStripBtn");
-const downloadVideoBtn = document.getElementById("downloadVideoBtn");
-const recIndicator = document.getElementById("recIndicator");
 const flashOverlay = document.getElementById("flashOverlay");
 
 const snapBtn = document.getElementById("snapBtn");
@@ -263,61 +261,113 @@ function updateAndDrawConfetti() {
   }
 }
 
-// ── Video recorder ────────────────────────────────────────────────────────────
-const recorder = {
-  instance: null,
-  chunks: [],
-  blob: null,
-};
+// ── Hand / Finger Skeleton Rendering Engine ──────────────────────────────────
+const HAND_CONNECTIONS = [
+  // Thumb
+  [0, 1], [1, 2], [2, 3], [3, 4],
+  // Index
+  [0, 5], [5, 6], [6, 7], [7, 8],
+  // Middle
+  [0, 9], [9, 10], [10, 11], [11, 12],
+  // Ring
+  [0, 13], [13, 14], [14, 15], [15, 16],
+  // Pinky
+  [0, 17], [17, 18], [18, 19], [19, 20],
+  // Palm webbing
+  [5, 9], [9, 13], [13, 17]
+];
 
-function startRecording() {
-  recorder.chunks = [];
-  recorder.blob = null;
-  downloadVideoBtn.disabled = true;
-  try {
-    const stream = canvas.captureStream(30);
-    const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp9")
-      ? "video/webm;codecs=vp9"
-      : "video/webm";
-    recorder.instance = new MediaRecorder(stream, { mimeType });
-    recorder.instance.ondataavailable = (e) => {
-      if (e.data.size > 0) recorder.chunks.push(e.data);
-    };
-    recorder.instance.onstop = () => {
-      recorder.blob = new Blob(recorder.chunks, { type: "video/webm" });
-      downloadVideoBtn.disabled = false;
-      recIndicator.classList.add("hidden");
-    };
-    recorder.instance.start();
-    recIndicator.classList.remove("hidden");
-  } catch (err) {
-    console.warn("[EPIC Special Puzzle] MediaRecorder start warning:", err);
+function drawHandSkeleton(ctx, landmarks, isPinching = false) {
+  if (!landmarks || landmarks.length < 21) return;
+
+  const points = landmarks.map((lm) => ({
+    x: (1 - lm.x) * canvas.width,
+    y: lm.y * canvas.height,
+  }));
+
+  ctx.save();
+
+  // 1. Draw Bones with neon cyber glow
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  HAND_CONNECTIONS.forEach(([i, j]) => {
+    const p1 = points[i];
+    const p2 = points[j];
+
+    // Outer glow
+    ctx.strokeStyle = isPinching ? "rgba(245, 197, 24, 0.45)" : "rgba(0, 229, 255, 0.4)";
+    ctx.lineWidth = 6;
+    ctx.beginPath();
+    ctx.moveTo(p1.x, p1.y);
+    ctx.lineTo(p2.x, p2.y);
+    ctx.stroke();
+
+    // Inner core bone line
+    ctx.strokeStyle = isPinching ? "#f5c518" : "#00e5ff";
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(p1.x, p1.y);
+    ctx.lineTo(p2.x, p2.y);
+    ctx.stroke();
+  });
+
+  // 2. Draw Joint Nodes
+  points.forEach((pt, idx) => {
+    const isTip = (idx === 4 || idx === 8 || idx === 12 || idx === 16 || idx === 20);
+    const isIndexOrThumb = (idx === 4 || idx === 8);
+
+    const radius = isIndexOrThumb ? (isPinching ? 8 : 6) : isTip ? 5 : 4;
+    const nodeColor = isIndexOrThumb
+      ? (isPinching ? "#f5c518" : "#00e5ff")
+      : (isTip ? "#ffffff" : "rgba(0, 229, 255, 0.9)");
+
+    // Joint aura
+    ctx.beginPath();
+    ctx.arc(pt.x, pt.y, radius + 2, 0, Math.PI * 2);
+    ctx.fillStyle = isPinching ? "rgba(245, 197, 24, 0.3)" : "rgba(0, 229, 255, 0.25)";
+    ctx.fill();
+
+    // Joint center
+    ctx.beginPath();
+    ctx.arc(pt.x, pt.y, radius, 0, Math.PI * 2);
+    ctx.fillStyle = nodeColor;
+    ctx.fill();
+    ctx.strokeStyle = "#000000";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  });
+
+  // 3. Pinching connection line & target indicator
+  if (isPinching) {
+    const thumb = points[4];
+    const index = points[8];
+    const midX = (thumb.x + index.x) / 2;
+    const midY = (thumb.y + index.y) / 2;
+
+    ctx.beginPath();
+    ctx.moveTo(thumb.x, thumb.y);
+    ctx.lineTo(index.x, index.y);
+    ctx.strokeStyle = "#ffd700";
+    ctx.lineWidth = 3;
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(midX, midY, 14, 0, Math.PI * 2);
+    ctx.strokeStyle = "#f5c518";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([3, 3]);
+    ctx.stroke();
+    ctx.setLineDash([]);
   }
-}
 
-function stopRecording() {
-  if (recorder.instance && recorder.instance.state !== "inactive") {
-    try {
-      recorder.instance.stop();
-    } catch (e) {}
-  }
-}
-
-function downloadVideo() {
-  if (!recorder.blob) return;
-  const url = URL.createObjectURL(recorder.blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = `epic_puzzle_solve_${Date.now()}.webm`;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  setTimeout(() => URL.revokeObjectURL(url), 4000);
+  ctx.restore();
 }
 
 // ── WebSocket Tournament Client ───────────────────────────────────────────────
 let ws = null;
 let reconnectTimer = null;
+const wsSendQueue = [];
+
 let myPlayer = {
   id: null,
   name: "",
@@ -335,6 +385,7 @@ function connectWebSocket() {
 
   ws.onopen = () => {
     console.log("[Tournament WS] Connected.");
+    flushWSSendQueue();
     if (myPlayer.name) {
       ws.send(JSON.stringify({ type: "PLAYER_JOIN", name: myPlayer.name }));
     }
@@ -350,9 +401,9 @@ function connectWebSocket() {
   };
 
   ws.onclose = () => {
-    console.log("[Tournament WS] Disconnected. Reconnecting in 3s…");
+    console.log("[Tournament WS] Disconnected. Reconnecting in 2s…");
     clearTimeout(reconnectTimer);
-    reconnectTimer = setTimeout(connectWebSocket, 3000);
+    reconnectTimer = setTimeout(connectWebSocket, 2000);
   };
 
   ws.onerror = (err) => {
@@ -363,10 +414,20 @@ function connectWebSocket() {
 function sendWS(data) {
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(data));
+  } else {
+    wsSendQueue.push(data);
+  }
+}
+
+function flushWSSendQueue() {
+  while (wsSendQueue.length > 0 && ws && ws.readyState === WebSocket.OPEN) {
+    const data = wsSendQueue.shift();
+    ws.send(JSON.stringify(data));
   }
 }
 
 function handleServerMessage(msg) {
+  console.log("[Tournament WS] Message:", msg.type, msg);
   switch (msg.type) {
     case "PLAYER_REGISTERED":
       myPlayer.id = msg.playerId;
@@ -374,36 +435,61 @@ function handleServerMessage(msg) {
       if (lobbyPlayerName) lobbyPlayerName.textContent = msg.name;
       serverTournamentState = msg.tournamentState || "LOBBY";
       updateTournamentStateUI(serverTournamentState, msg.stats, msg.elapsed);
+      if (msg.leaderboard) {
+        globalLeaderboard = msg.leaderboard;
+        renderSidebarLeaderboard(globalLeaderboard);
+      }
 
-      // STRICT CONTEST LOCK: Show Lobby modal if contest is not ACTIVE
+      // Show Lobby modal only if name entry is closed and contest is NOT active
       if (serverTournamentState !== "ACTIVE") {
-        lobbyModal.classList.remove("hidden");
+        if (nameEntryModal.classList.contains("hidden")) {
+          lobbyModal.classList.remove("hidden");
+        }
         statusDot.className = "status-dot";
         statusText.textContent = "🚀 Contest about to start — waiting for admin";
       } else {
         lobbyModal.classList.add("hidden");
         statusDot.className = "status-dot live";
         statusText.textContent = `${myPlayer.name} — Contest Live! Align face & SNAP`;
+        ensureCameraAndModelsReady();
       }
       break;
 
     case "TOURNAMENT_STATE":
       serverTournamentState = msg.state;
       updateTournamentStateUI(serverTournamentState, msg.stats, msg.elapsed);
+      if (msg.leaderboard) {
+        globalLeaderboard = msg.leaderboard;
+        renderSidebarLeaderboard(globalLeaderboard);
+      }
       if (msg.announcement) showAnnouncement(msg.announcement);
 
-      // STRICT LOCK UPDATE
+      // Only show lobby modal if name entry was completed and not in puzzle
       if (serverTournamentState !== "ACTIVE" && appState !== "puzzle" && appState !== "shattering") {
-        lobbyModal.classList.remove("hidden");
+        if (nameEntryModal.classList.contains("hidden") && myPlayer.name) {
+          lobbyModal.classList.remove("hidden");
+        }
         statusDot.className = "status-dot";
         statusText.textContent = "🔒 Contest locked — waiting for admin";
+      } else if (serverTournamentState === "ACTIVE" && nameEntryModal.classList.contains("hidden")) {
+        ensureCameraAndModelsReady();
       }
       break;
 
     case "TOURNAMENT_START":
       serverTournamentState = "ACTIVE";
-      lobbyModal.classList.add("hidden");
+      myPlayer.solveTime = null;
+      myPlayer.rank = null;
+      rankBadge.classList.add("hidden");
+      solveResultModal.classList.add("hidden");
       endedModal.classList.add("hidden");
+      lobbyModal.classList.add("hidden");
+
+      if (appState === "puzzle" || appState === "shattering" || puzzle.solved) {
+        resetPuzzleOnly();
+      }
+
+      ensureCameraAndModelsReady();
       updateTournamentStateUI("ACTIVE");
       playTone({ freq: 880, type: "sine", gain: 0.2, duration: 0.3 });
       soundComplete();
@@ -413,6 +499,11 @@ function handleServerMessage(msg) {
 
     case "TOURNAMENT_END":
       serverTournamentState = "ENDED";
+      if (appState === "countdown") {
+        countdown.active = false;
+        appState = "tracking";
+        updateGestureHUD();
+      }
       updateTournamentStateUI("ENDED", msg.stats, msg.elapsed);
       if (msg.leaderboard) {
         globalLeaderboard = msg.leaderboard;
@@ -428,9 +519,18 @@ function handleServerMessage(msg) {
       serverTournamentState = "LOBBY";
       myPlayer.solveTime = null;
       myPlayer.rank = null;
+      rankBadge.classList.add("hidden");
+      solveResultModal.classList.add("hidden");
+      endedModal.classList.add("hidden");
       resetPuzzleOnly();
-      updateTournamentStateUI("LOBBY");
-      lobbyModal.classList.remove("hidden");
+      updateTournamentStateUI("LOBBY", msg.stats);
+      if (msg.leaderboard) {
+        globalLeaderboard = msg.leaderboard;
+        renderSidebarLeaderboard(globalLeaderboard);
+      }
+      if (nameEntryModal.classList.contains("hidden") && myPlayer.name) {
+        lobbyModal.classList.remove("hidden");
+      }
       statusDot.className = "status-dot";
       statusText.textContent = "🔒 Contest reset — waiting in lobby";
       break;
@@ -475,19 +575,22 @@ function handleServerMessage(msg) {
 }
 
 function updateTournamentStateUI(state, stats, elapsed) {
-  tsState.textContent = state;
-  tsState.className = `ts-value ts-${state.toLowerCase()}`;
+  console.log("[Tournament UI] State:", state, "Connected players:", stats?.connected, "Total registered:", stats?.totalPlayers);
+  if (tsState) {
+    tsState.textContent = state;
+    tsState.className = `ts-value ts-${state.toLowerCase()}`;
+  }
   if (stats) {
-    tsPlayers.textContent = `${stats.connected} (${stats.solved} solved)`;
-    lobbyPlayerCount.textContent = stats.connected;
+    if (tsPlayers) tsPlayers.textContent = `${stats.connected} (${stats.solved} solved)`;
+    if (lobbyPlayerCount) lobbyPlayerCount.textContent = stats.connected;
   }
   if (elapsed != null && elapsed > 0) {
-    tsElapsedRow.style.display = "flex";
+    if (tsElapsedRow) tsElapsedRow.style.display = "flex";
     const m = Math.floor(elapsed / 60);
     const s = Math.floor(elapsed % 60);
-    tsElapsed.textContent = `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+    if (tsElapsed) tsElapsed.textContent = `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
   } else {
-    tsElapsedRow.style.display = "none";
+    if (tsElapsedRow) tsElapsedRow.style.display = "none";
   }
 }
 
@@ -629,8 +732,6 @@ function resetPuzzleOnly() {
   smoothFaceBox.initialized = false;
   smoothFaceBox.detected = false;
   saveSolveBtn.classList.add("hidden");
-  stopRecording();
-  recIndicator.classList.add("hidden");
   updateProgressBadge();
   updateGestureHUD();
 }
@@ -644,26 +745,31 @@ function formatTime(seconds) {
 }
 
 function updateGestureHUD() {
-  if (appState === "tracking") {
-    gestureIcon.textContent = "👤";
-    gestureTitle.textContent = "AI FACE TRACKING";
-    gestureHint.textContent = "Center face & click SNAP PHOTO when ready";
-    saveSolveBtn.classList.add("hidden");
-  } else if (appState === "countdown") {
-    gestureIcon.textContent = "⏱️";
-    gestureTitle.textContent = "SMILE & HOLD STILL";
-    gestureHint.textContent = "Capturing photobooth portrait in 3 seconds…";
-    saveSolveBtn.classList.add("hidden");
-  } else if (appState === "puzzle") {
-    if (puzzle.solved) {
-      gestureIcon.textContent = "✊";
-      gestureTitle.textContent = "SOLVED! MAKE FIST TO SUBMIT";
-      gestureHint.textContent = "Hold a closed fist for 1s or click SUBMIT button";
+  if (gestureIcon) {
+    if (appState === "tracking") {
+      gestureIcon.textContent = "👤";
+      if (gestureTitle) gestureTitle.textContent = "AI FACE TRACKING";
+      if (gestureHint) gestureHint.textContent = "Center face & click SNAP PHOTO when ready";
+    } else if (appState === "countdown") {
+      gestureIcon.textContent = "⏱️";
+      if (gestureTitle) gestureTitle.textContent = "SMILE & HOLD STILL";
+      if (gestureHint) gestureHint.textContent = "Capturing photobooth portrait in 3 seconds…";
+    } else if (appState === "puzzle") {
+      if (puzzle.solved) {
+        gestureIcon.textContent = "🏆";
+        if (gestureTitle) gestureTitle.textContent = "SOLVED!";
+        if (gestureHint) gestureHint.textContent = "Click SUBMIT TIME button";
+      } else {
+        gestureIcon.textContent = "🧩";
+        if (gestureTitle) gestureTitle.textContent = "SOLVE PUZZLE";
+        if (gestureHint) gestureHint.textContent = "Use pinch gesture to drag pieces";
+      }
+    }
+  }
+  if (saveSolveBtn) {
+    if (appState === "puzzle" && puzzle.solved) {
       saveSolveBtn.classList.remove("hidden");
     } else {
-      gestureIcon.textContent = "🧩";
-      gestureTitle.textContent = "SOLVE PUZZLE";
-      gestureHint.textContent = "Touch or drag pieces into matching slots";
       saveSolveBtn.classList.add("hidden");
     }
   }
@@ -996,12 +1102,10 @@ function finishCountdownAndCapture(box) {
 
   puzzle.fullPhotoboothCanvas = styledCanvas;
   myPlayer.photoCanvas = styledCanvas;
-  downloadStripBtn.disabled = false;
 
   initPuzzleBoard(styledCanvas, box);
   appState = "puzzle";
   puzzle.timerStartedAt = performance.now();
-  startRecording();
   updateProgressBadge();
   updateGestureHUD();
   statusText.textContent = `${myPlayer.name || "Player"} — solve your 3x3 face puzzle!`;
@@ -1169,13 +1273,11 @@ function updateProgressBadge(placedCount = 0) {
   }
 }
 
-// ── Dragging logic (Pointer & Touch with offset for finger placement) ─────────
+// ── Air Gesture Dragging logic (MediaPipe Hand Tracking Only) ─────────────────
 const drag = { activeHand: null, piece: null };
-const pointerDrag = { active: false, piece: null, startX: 0, startY: 0, initialPieceX: 0, initialPieceY: 0, isTouch: false };
 
 function getPieceUnderPoint(px, py) {
-  // Allow slightly larger hit area for mobile touch (12px padding)
-  const pad = 12;
+  const pad = 16;
   return puzzle.pieces.find((p) => px >= p.x - pad && px <= p.x + puzzle.tileW + pad && py >= p.y - pad && py <= p.y + puzzle.tileH + pad);
 }
 
@@ -1229,77 +1331,6 @@ function snapPieceToSlot(piece) {
     checkPuzzleSolvedState();
   }
 }
-
-// Mouse / Touch pointer controls with finger offset
-function getCanvasCoords(clientX, clientY) {
-  const rect = canvas.getBoundingClientRect();
-  const scaleX = canvas.width / rect.width;
-  const scaleY = canvas.height / rect.height;
-  return {
-    x: (clientX - rect.left) * scaleX,
-    y: (clientY - rect.top) * scaleY,
-  };
-}
-
-function onPointerDown(e) {
-  if (appState !== "puzzle" || puzzle.solved) return;
-  const clientX = e.clientX || (e.touches && e.touches[0].clientX);
-  const clientY = e.clientY || (e.touches && e.touches[0].clientY);
-  if (!clientX || !clientY) return;
-
-  const coords = getCanvasCoords(clientX, clientY);
-  const targetPiece = getPieceUnderPoint(coords.x, coords.y);
-  if (targetPiece) {
-    pointerDrag.active = true;
-    pointerDrag.piece = targetPiece;
-    pointerDrag.startX = coords.x;
-    pointerDrag.startY = coords.y;
-    pointerDrag.initialPieceX = targetPiece.x;
-    pointerDrag.initialPieceY = targetPiece.y;
-    pointerDrag.isTouch = !!e.touches;
-  }
-}
-
-function onPointerMove(e) {
-  if (!pointerDrag.active || !pointerDrag.piece) return;
-  const clientX = e.clientX || (e.touches && e.touches[0].clientX);
-  const clientY = e.clientY || (e.touches && e.touches[0].clientY);
-  if (!clientX || !clientY) return;
-
-  const coords = getCanvasCoords(clientX, clientY);
-  // Apply a slight upward offset on mobile touch so the finger doesn't hide the tile
-  const fingerOffsetY = pointerDrag.isTouch ? -puzzle.tileH * 0.35 : 0;
-
-  pointerDrag.piece.x = pointerDrag.initialPieceX + (coords.x - pointerDrag.startX);
-  pointerDrag.piece.y = pointerDrag.initialPieceY + (coords.y - pointerDrag.startY) + fingerOffsetY;
-}
-
-function onPointerUp() {
-  if (pointerDrag.active && pointerDrag.piece) {
-    snapPieceToSlot(pointerDrag.piece);
-    pointerDrag.active = false;
-    pointerDrag.piece = null;
-  }
-}
-
-canvas.addEventListener("mousedown", onPointerDown);
-window.addEventListener("mousemove", onPointerMove);
-window.addEventListener("mouseup", onPointerUp);
-
-canvas.addEventListener("touchstart", (e) => {
-  if (e.touches.length === 1) {
-    onPointerDown(e);
-  }
-}, { passive: false });
-
-window.addEventListener("touchmove", (e) => {
-  if (pointerDrag.active && e.touches.length === 1) {
-    e.preventDefault();
-    onPointerMove(e);
-  }
-}, { passive: false });
-
-window.addEventListener("touchend", onPointerUp);
 
 // ── Shatter Animation ─────────────────────────────────────────────────────────
 let fistHoldCounter = 0;
@@ -1372,24 +1403,26 @@ function updateAndDrawShatter() {
 // ── Render & Detection Loop ───────────────────────────────────────────────────
 function drawLiveFaceViewfinder(box, isLive = true) {
   ctx.save();
-  ctx.strokeStyle = isLive ? "#00e5ff" : "#606d86";
-  ctx.lineWidth = isLive ? 2.5 : 1.5;
+  ctx.strokeStyle = isLive ? "#10b981" : "#606d86";
+  ctx.lineWidth = isLive ? 3 : 1.5;
   ctx.strokeRect(box.x, box.y, box.width, box.height);
 
   const bracket = Math.min(28, box.width * 0.15);
   ctx.strokeStyle = "#f5c518";
-  ctx.lineWidth = 3.5;
+  ctx.lineWidth = 4;
 
   ctx.beginPath(); ctx.moveTo(box.x, box.y + bracket); ctx.lineTo(box.x, box.y); ctx.lineTo(box.x + bracket, box.y); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(box.x + box.width - bracket, box.y); ctx.lineTo(box.x + box.width, box.y); ctx.lineTo(box.x + box.width, box.y + bracket); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(box.x, box.y + box.height - bracket); ctx.lineTo(box.x, box.y + box.height); ctx.lineTo(box.x + bracket, box.y + box.height); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(box.x + box.width - bracket, box.y + box.height); ctx.lineTo(box.x + box.width, box.y + box.height); ctx.lineTo(box.x + box.width, box.y + box.height - bracket); ctx.stroke();
 
-  ctx.fillStyle = "rgba(10, 12, 18, 0.75)";
-  ctx.fillRect(box.x, box.y - 28, 140, 24);
-  ctx.fillStyle = isLive ? "#00e5ff" : "#9aa5be";
-  ctx.font = "bold 10px 'IBM Plex Mono', monospace";
-  ctx.fillText(isLive ? "[ 👤 FACE DETECTED ]" : "[ SEARCHING… ]", box.x + 8, box.y - 12);
+  if (isLive) {
+    ctx.fillStyle = "rgba(16, 185, 129, 0.9)";
+    ctx.fillRect(box.x, box.y - 30, 150, 24);
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 11px 'Outfit', sans-serif";
+    ctx.fillText("🟢 FACE DETECTED", box.x + 10, box.y - 14);
+  }
   ctx.restore();
 }
 
@@ -1453,20 +1486,25 @@ function processFrame(nowMs) {
   ctx.fillStyle = "#090c10";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  // Background video B&W
-  ctx.save();
-  ctx.translate(canvas.width, 0);
-  ctx.scale(-1, 1);
-  ctx.filter = "grayscale(80%) brightness(50%)";
-  ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
-  ctx.filter = "none";
-  ctx.restore();
+  if (serverTournamentState !== "ACTIVE") {
+    ctx.restore();
+    if (snapBtn) snapBtn.classList.add("hidden");
+    return;
+  }
+
+  // Draw video feed
+  if (videoEl.readyState >= 2) {
+    ctx.save();
+    ctx.translate(canvas.width, 0);
+    ctx.scale(-1, 1);
+    ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+    ctx.restore();
+  }
 
   let detections = [];
   let handsLandmarks = [];
 
-  // STRICT CONTEST LOCK: Only process camera vision if contest is ACTIVE
-  if (videoEl.readyState >= 2 && serverTournamentState === "ACTIVE") {
+  if (videoEl.readyState >= 2) {
     if (faceDetector && (appState === "tracking" || appState === "countdown")) {
       try {
         const res = faceDetector.detectForVideo(videoEl, nowMs);
@@ -1481,41 +1519,46 @@ function processFrame(nowMs) {
     }
   }
 
+  // Update snapBtn visibility
+  if (snapBtn) {
+    if (appState === "tracking") {
+      snapBtn.classList.remove("hidden");
+    } else {
+      snapBtn.classList.add("hidden");
+    }
+  }
+
   // ── TRACKING PHASE ──
   if (appState === "tracking") {
-    if (serverTournamentState === "ACTIVE") {
-      if (detections.length > 0) {
-        const primaryDetection = detections.reduce((best, cur) => {
-          const areaBest = (best.boundingBox?.width || 0) * (best.boundingBox?.height || 0);
-          const areaCur = (cur.boundingBox?.width || 0) * (cur.boundingBox?.height || 0);
-          return areaCur > areaBest ? cur : best;
-        }, detections[0]);
+    if (detections.length > 0) {
+      const primaryDetection = detections.reduce((best, cur) => {
+        const areaBest = (best.boundingBox?.width || 0) * (best.boundingBox?.height || 0);
+        const areaCur = (cur.boundingBox?.width || 0) * (cur.boundingBox?.height || 0);
+        return areaCur > areaBest ? cur : best;
+      }, detections[0]);
 
-        const portraitFrame = computeFacePortraitFrame(primaryDetection);
-        if (portraitFrame) {
-          updateSmoothFaceBox(portraitFrame);
-          drawLiveFaceViewfinder(smoothFaceBox, true);
-          statusDot.className = "status-dot live";
-          statusText.textContent = `${myPlayer.name || "Player"} — Face tracked! Tap SNAP PHOTO when ready`;
-        }
-      } else {
-        const sinceLastSeen = nowMs - smoothFaceBox.lastSeenAt;
-        if (smoothFaceBox.initialized && sinceLastSeen < 700) {
-          drawLiveFaceViewfinder(smoothFaceBox, false);
-        }
+      const portraitFrame = computeFacePortraitFrame(primaryDetection);
+      if (portraitFrame) {
+        updateSmoothFaceBox(portraitFrame);
+        drawLiveFaceViewfinder(smoothFaceBox, true);
         statusDot.className = "status-dot live";
-        statusText.textContent = `${myPlayer.name || "Player"} — look at camera to track face`;
-      }
-
-      if (handsLandmarks.length >= 1) {
-        const anyPinch = handsLandmarks.some((lm) => isPinching(lm));
-        if (anyPinch && smoothFaceBox.initialized) {
-          triggerManualSnap();
-        }
+        statusText.textContent = `${myPlayer.name || "Player"} — Face Detected! Click SNAP PHOTO`;
       }
     } else {
-      statusDot.className = "status-dot";
-      statusText.textContent = "🔒 Contest locked — waiting for host to start";
+      const sinceLastSeen = nowMs - smoothFaceBox.lastSeenAt;
+      if (smoothFaceBox.initialized && sinceLastSeen < 700) {
+        drawLiveFaceViewfinder(smoothFaceBox, false);
+      }
+      statusDot.className = "status-dot live";
+      statusText.textContent = `${myPlayer.name || "Player"} — Face camera to frame portrait`;
+    }
+
+    if (handsLandmarks.length >= 1) {
+      handsLandmarks.forEach((lm) => drawHandSkeleton(ctx, lm, isPinching(lm)));
+      const anyPinch = handsLandmarks.some((lm) => isPinching(lm));
+      if (anyPinch && smoothFaceBox.initialized) {
+        triggerManualSnap();
+      }
     }
   }
 
@@ -1538,6 +1581,9 @@ function processFrame(nowMs) {
         const indexPt = { x: (1 - lm[LM.INDEX_TIP].x) * canvas.width, y: lm[LM.INDEX_TIP].y * canvas.height };
         const pinching = isPinching(lm);
 
+        // Draw finger skeleton
+        drawHandSkeleton(ctx, lm, pinching);
+
         if (pinching && !drag.piece && !puzzle.solved) {
           const target = getPieceUnderPoint(indexPt.x, indexPt.y);
           if (target) {
@@ -1551,9 +1597,12 @@ function processFrame(nowMs) {
 
           ctx.save();
           ctx.beginPath();
-          ctx.arc(indexPt.x, indexPt.y, 12, 0, Math.PI * 2);
-          ctx.fillStyle = "#00e5ff";
+          ctx.arc(indexPt.x, indexPt.y, 14, 0, Math.PI * 2);
+          ctx.fillStyle = "rgba(0, 229, 255, 0.9)";
           ctx.fill();
+          ctx.strokeStyle = "#ffffff";
+          ctx.lineWidth = 2;
+          ctx.stroke();
           ctx.restore();
         } else if (!pinching && drag.piece) {
           snapPieceToSlot(drag.piece);
@@ -1587,91 +1636,67 @@ function renderLoop(nowMs) {
   requestAnimationFrame(renderLoop);
 }
 
-function showLoaderError(msg) {
-  loadingOverlay.classList.remove("hidden");
-  loaderText.style.color = "var(--coral)";
-  loaderText.textContent = msg;
-  loaderRetry.classList.remove("hidden");
-}
+
 
 function resetLoaderUI() {
-  loadingOverlay.classList.remove("hidden");
-  loaderText.style.color = "";
-  loaderText.textContent = "Loading AI Face & Hand neural models…";
-  loaderRetry.classList.add("hidden");
-  errorBanner.style.display = "none";
+  if (loadingOverlay) loadingOverlay.classList.add("hidden");
+  if (loaderText) {
+    loaderText.style.color = "";
+    loaderText.textContent = "Loading AI neural models…";
+  }
+  if (loaderRetry) loaderRetry.classList.add("hidden");
+  if (errorBanner) errorBanner.style.display = "none";
 }
 
-async function boot() {
-  resetLoaderUI();
-  let settled = false;
-  const watchdogMs = LOAD_TIMEOUT_MS * 2 + 8000;
-  const watchdog = setTimeout(() => {
-    if (!settled) showLoaderError("Loading taking longer than expected. Click retry.");
-  }, watchdogMs);
+function showLoaderError(msg) {
+  if (loadingOverlay) loadingOverlay.classList.remove("hidden");
+  if (loaderText) {
+    loaderText.style.color = "var(--coral)";
+    loaderText.textContent = msg;
+  }
+  if (loaderRetry) loaderRetry.classList.remove("hidden");
+}
+
+let cameraAndModelsReady = false;
+let initializingModels = false;
+
+async function ensureCameraAndModelsReady() {
+  if (cameraAndModelsReady || initializingModels) return;
+  initializingModels = true;
+  if (loadingOverlay) loadingOverlay.classList.remove("hidden");
+  if (loaderText) loaderText.textContent = "Loading camera & AI vision models…";
 
   try {
     if (!videoEl.srcObject) await initWebcam();
-    loaderText.textContent = "Loading MediaPipe WASM runtime…";
     const vision = await withTimeout(
       FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"),
       LOAD_TIMEOUT_MS,
       "Timed out loading MediaPipe WASM."
     );
-
-    loaderText.textContent = "Loading AI Face Detection neural model…";
     faceDetector = await initFaceDetector(vision);
-
-    loaderText.textContent = "Loading Hand Tracking neural model…";
     handLandmarker = await initHandLandmarker(vision);
 
-    settled = true;
-    clearTimeout(watchdog);
-    loadingOverlay.classList.add("hidden");
-    statusText.textContent = "enter player name to join";
-
-    connectWebSocket();
-    requestAnimationFrame(renderLoop);
-    nameEntryModal.classList.remove("hidden");
+    cameraAndModelsReady = true;
+    initializingModels = false;
+    if (loadingOverlay) loadingOverlay.classList.add("hidden");
   } catch (err) {
-    settled = true;
-    clearTimeout(watchdog);
-    if (err && err.name === "NotAllowedError") {
-      showLoaderError("Camera permission denied. Enable camera access and click retry.");
-    } else if (err && err.name === "NotFoundError") {
-      showLoaderError("No camera found on your device.");
-    } else {
-      showLoaderError((err && err.message) || "Error starting application.");
-    }
+    initializingModels = false;
+    console.error("Camera/model load error:", err);
+    showLoaderError("Camera access required for tournament. Enable access and click retry.");
   }
 }
 
+function boot() {
+  resetLoaderUI();
+  connectWebSocket();
+  requestAnimationFrame(renderLoop);
+  if (nameEntryModal) nameEntryModal.classList.remove("hidden");
+}
+
 // ── Event Listeners ───────────────────────────────────────────────────────────
-loaderRetry.addEventListener("click", () => boot());
+if (loaderRetry) loaderRetry.addEventListener("click", () => ensureCameraAndModelsReady());
 
 if (snapBtn) snapBtn.addEventListener("click", triggerManualSnap);
-if (mobileSnapBtn) mobileSnapBtn.addEventListener("click", triggerManualSnap);
-
-if (downloadStripBtn) {
-  downloadStripBtn.addEventListener("click", () => {
-    if (!myPlayer.photoCanvas) return;
-    myPlayer.photoCanvas.toBlob((blob) => {
-      if (!blob) return;
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `epic_tournament_face_${Date.now()}.png`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      setTimeout(() => URL.revokeObjectURL(url), 4000);
-    });
-  });
-}
-
-if (downloadVideoBtn) {
-  downloadVideoBtn.addEventListener("click", downloadVideo);
-}
 
 if (startGameBtn) {
   startGameBtn.addEventListener("click", () => {
@@ -1682,7 +1707,19 @@ if (startGameBtn) {
       return;
     }
     myPlayer.name = val;
+    if (lobbyPlayerName) lobbyPlayerName.textContent = val;
     nameEntryModal.classList.add("hidden");
+
+    if (serverTournamentState !== "ACTIVE") {
+      lobbyModal.classList.remove("hidden");
+      statusDot.className = "status-dot";
+      statusText.textContent = "🚀 Contest about to start — waiting for admin";
+    } else {
+      lobbyModal.classList.add("hidden");
+      statusDot.className = "status-dot live";
+      statusText.textContent = `${myPlayer.name} — Contest Live! Align face & SNAP`;
+    }
+
     sendWS({ type: "PLAYER_JOIN", name: myPlayer.name });
     playTone({ freq: 523, type: "sine", gain: 0.15, duration: 0.2 });
   });

@@ -383,6 +383,7 @@
       if (authenticated || currentPin) {
         ws.send(JSON.stringify({ type: "ADMIN_AUTH", pin: currentPin }));
       }
+      flushAdminQueue();
     };
 
     ws.onmessage = (event) => {
@@ -399,13 +400,25 @@
     ws.onerror = () => {};
   }
 
+  const wsMsgQueue = [];
+
   function sendMsg(obj) {
     if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(obj));
+    } else {
+      wsMsgQueue.push(obj);
+    }
+  }
+
+  function flushAdminQueue() {
+    while (wsMsgQueue.length > 0 && ws && ws.readyState === WebSocket.OPEN) {
+      const obj = wsMsgQueue.shift();
       ws.send(JSON.stringify(obj));
     }
   }
 
   function handleMessage(msg) {
+    console.log("[Admin WS] Received:", msg.type, msg);
     switch (msg.type) {
       case "ADMIN_AUTH_OK":
         authenticated = true;
@@ -413,7 +426,10 @@
         adminPanel.style.display = "block";
         updateState(msg.tournamentState);
         updateStats(msg.stats);
-        if (msg.leaderboard) renderLeaderboard(msg.leaderboard);
+        if (msg.leaderboard) {
+          currentLeaderboard = msg.leaderboard;
+          renderLeaderboard(currentLeaderboard);
+        }
         if (msg.timerDuration) timerInput.value = msg.timerDuration;
         break;
 
@@ -426,6 +442,10 @@
       case "TOURNAMENT_STATE":
         updateState(msg.state);
         updateStats(msg.stats);
+        if (msg.leaderboard) {
+          currentLeaderboard = msg.leaderboard;
+          renderLeaderboard(currentLeaderboard);
+        }
         updateTimerDisplay(msg.elapsed, msg.remaining);
         break;
 
@@ -442,14 +462,19 @@
 
       case "TOURNAMENT_END":
         updateState("ENDED");
-        if (msg.leaderboard) renderLeaderboard(msg.leaderboard);
+        if (msg.leaderboard) {
+          currentLeaderboard = msg.leaderboard;
+          renderLeaderboard(currentLeaderboard);
+        }
         updateStats(msg.stats);
         break;
 
       case "TOURNAMENT_RESET":
         updateState("LOBBY");
-        currentLeaderboard = [];
-        renderLeaderboard([]);
+        if (msg.leaderboard) {
+          currentLeaderboard = msg.leaderboard;
+          renderLeaderboard(currentLeaderboard);
+        }
         break;
 
       case "CSV_DATA":
@@ -457,6 +482,9 @@
         break;
     }
   }
+
+  let adminTimerInterval = null;
+  let activeElapsedSeconds = 0;
 
   function updateState(state) {
     currentState = state;
@@ -470,6 +498,27 @@
       timerDisplay.style.display = "flex";
     } else {
       timerDisplay.style.display = "none";
+      activeElapsedSeconds = 0;
+      updateTimerDisplay(0, null);
+    }
+
+    if (state === "ACTIVE") {
+      if (!adminTimerInterval) {
+        adminTimerInterval = setInterval(() => {
+          if (currentState === "ACTIVE") {
+            activeElapsedSeconds++;
+            elapsedDisplay.textContent = formatTimeMM(activeElapsedSeconds);
+          } else {
+            clearInterval(adminTimerInterval);
+            adminTimerInterval = null;
+          }
+        }, 1000);
+      }
+    } else {
+      if (adminTimerInterval) {
+        clearInterval(adminTimerInterval);
+        adminTimerInterval = null;
+      }
     }
   }
 
@@ -484,7 +533,10 @@
   }
 
   function updateTimerDisplay(elapsed, remaining) {
-    elapsedDisplay.textContent = formatTimeMM(elapsed);
+    if (elapsed != null) {
+      activeElapsedSeconds = elapsed;
+      elapsedDisplay.textContent = formatTimeMM(elapsed);
+    }
     if (remaining != null) {
       remainingBlock.style.display = "flex";
       remainingDisplay.textContent = formatTimeMM(remaining);
@@ -494,6 +546,7 @@
   }
 
   function renderLeaderboard(entries) {
+    console.log("[Admin UI] Rendering leaderboard with", entries.length, "players:", entries);
     const searchTerm = lbSearch.value.toLowerCase().trim();
     let filtered = entries;
     if (searchTerm) {
