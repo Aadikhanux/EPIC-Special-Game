@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EPIC Special — Admin Mission Control</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Outfit:wght@400;500;600;700;800;900&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-base: #090c10;
+      --bg-surface: #121824;
+      --bg-card: rgba(18, 24, 38, 0.92);
+      --ink-primary: #f3f5fa;
+      --ink-secondary: #9aa5be;
+      --ink-dim: #606d86;
+      --gold: #f5c518;
+      --gold-glow: rgba(245, 197, 24, 0.4);
+      --cyan: #00e5ff;
+      --cyan-glow: rgba(0, 229, 255, 0.4);
+      --emerald: #10b981;
+      --emerald-glow: rgba(16, 185, 129, 0.4);
+      --coral: #ff4757;
+      --coral-glow: rgba(255, 71, 87, 0.4);
+      --font-display: 'Outfit', sans-serif;
+      --font-sans: 'Plus Jakarta Sans', sans-serif;
+      --font-mono: 'IBM Plex Mono', monospace;
+      --radius-md: 10px;
+      --radius-lg: 16px;
+      --radius-pill: 9999px;
+      --border-subtle: rgba(255,255,255,0.08);
+      --border-glass: rgba(255,255,255,0.14);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { width: 100%; min-height: 100vh; background: var(--bg-base); color: var(--ink-primary); font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
+
+    /* PIN OVERLAY */
+    #pinOverlay {
+      position: fixed; inset: 0; background: rgba(6,8,12,0.95); display: flex;
+      align-items: center; justify-content: center; z-index: 1000; backdrop-filter: blur(20px);
+    }
+    #pinOverlay.hidden { display: none; }
+    .pin-card {
+      background: var(--bg-surface); border: 1px solid var(--border-glass);
+      border-radius: var(--radius-lg); padding: 48px 40px; text-align: center;
+      box-shadow: 0 24px 80px rgba(0,0,0,0.8); max-width: 380px; width: 100%;
+    }
+    .pin-card h1 { font-family: var(--font-display); font-size: 22px; font-weight: 800; letter-spacing: 0.06em; margin-bottom: 8px; }
+    .pin-card p { color: var(--ink-secondary); font-size: 13px; margin-bottom: 24px; }
+    .pin-input {
+      width: 100%; padding: 14px 18px; font-family: var(--font-mono); font-size: 18px;
+      font-weight: 700; text-align: center; letter-spacing: 0.3em; background: rgba(9,12,16,0.6);
+      border: 2px solid var(--border-glass); border-radius: var(--radius-md); color: var(--gold);
+      outline: none; transition: border-color 0.2s;
+    }
+    .pin-input:focus { border-color: var(--gold); box-shadow: 0 0 20px var(--gold-glow); }
+    .pin-error { color: var(--coral); font-size: 12px; font-family: var(--font-mono); margin-top: 10px; display: none; }
+    .pin-btn {
+      margin-top: 20px; width: 100%; padding: 14px; background: linear-gradient(135deg, var(--gold), #d4a800);
+      border: none; border-radius: var(--radius-md); font-family: var(--font-mono); font-size: 13px;
+      font-weight: 700; letter-spacing: 0.08em; color: #090c10; cursor: pointer;
+      box-shadow: 0 0 20px var(--gold-glow); transition: transform 0.15s, box-shadow 0.15s;
+    }
+    .pin-btn:hover { transform: translateY(-2px); box-shadow: 0 0 30px var(--gold-glow); }
+
+    /* MAIN LAYOUT */
+    .admin-container { max-width: 1200px; margin: 0 auto; padding: 24px; }
+    .admin-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 16px 0; border-bottom: 1px solid var(--border-subtle); margin-bottom: 28px;
+    }
+    .admin-brand { display: flex; align-items: center; gap: 12px; }
+    .admin-brand h1 { font-family: var(--font-display); font-size: 20px; font-weight: 800; letter-spacing: 0.06em; color: var(--gold); }
+    .admin-brand-tag { font-family: var(--font-mono); font-size: 9px; font-weight: 600; letter-spacing: 0.16em; color: var(--ink-dim); text-transform: uppercase; }
+    .admin-status-badge {
+      padding: 6px 16px; border-radius: var(--radius-pill); font-family: var(--font-mono);
+      font-size: 12px; font-weight: 700; letter-spacing: 0.08em; border: 1px solid;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .admin-status-badge .dot { width: 8px; height: 8px; border-radius: 50%; }
+    .admin-status-badge.lobby { background: rgba(0,229,255,0.1); border-color: rgba(0,229,255,0.4); color: var(--cyan); }
+    .admin-status-badge.lobby .dot { background: var(--cyan); animation: pulse 2s infinite; }
+    .admin-status-badge.active { background: rgba(16,185,129,0.1); border-color: rgba(16,185,129,0.4); color: var(--emerald); }
+    .admin-status-badge.active .dot { background: var(--emerald); animation: pulse 1s infinite; }
+    .admin-status-badge.ended { background: rgba(255,71,87,0.1); border-color: rgba(255,71,87,0.4); color: var(--coral); }
+    .admin-status-badge.ended .dot { background: var(--coral); }
+
+    @keyframes pulse { 0%,100% { transform: scale(1); opacity:1; } 50% { transform: scale(1.4); opacity:0.6; } }
+
+    /* STATS GRID */
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin-bottom: 28px; }
+    .stat-card {
+      background: var(--bg-card); border: 1px solid var(--border-glass); border-radius: var(--radius-md);
+      padding: 20px; backdrop-filter: blur(16px); transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .stat-card:hover { border-color: rgba(245,197,24,0.3); box-shadow: 0 0 16px rgba(245,197,24,0.1); }
+    .stat-card .stat-label { font-family: var(--font-mono); font-size: 9px; font-weight: 700; letter-spacing: 0.14em; color: var(--ink-dim); text-transform: uppercase; margin-bottom: 6px; }
+    .stat-card .stat-value { font-family: var(--font-display); font-size: 28px; font-weight: 900; color: var(--gold); }
+    .stat-card .stat-value.cyan { color: var(--cyan); }
+    .stat-card .stat-value.emerald { color: var(--emerald); }
+    .stat-card .stat-value.coral { color: var(--coral); }
+
+    /* CONTROLS */
+    .controls-section { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 28px; }
+    .ctrl-btn {
+      display: flex; align-items: center; gap: 10px; padding: 14px 28px; border-radius: var(--radius-md);
+      font-family: var(--font-mono); font-size: 13px; font-weight: 700; letter-spacing: 0.06em;
+      cursor: pointer; border: 2px solid; transition: all 0.2s cubic-bezier(0.16,1,0.3,1);
+    }
+    .ctrl-btn:hover { transform: translateY(-2px); }
+    .ctrl-btn:active { transform: translateY(0); }
+    .ctrl-btn:disabled { opacity: 0.35; cursor: not-allowed; transform: none !important; }
+
+    .ctrl-btn.start { background: rgba(16,185,129,0.15); border-color: var(--emerald); color: var(--emerald); box-shadow: 0 0 16px var(--emerald-glow); }
+    .ctrl-btn.start:hover:not(:disabled) { background: var(--emerald); color: #042f1e; }
+    .ctrl-btn.stop { background: rgba(255,71,87,0.15); border-color: var(--coral); color: var(--coral); box-shadow: 0 0 16px var(--coral-glow); }
+    .ctrl-btn.stop:hover:not(:disabled) { background: var(--coral); color: #fff; }
+    .ctrl-btn.reset { background: rgba(0,229,255,0.1); border-color: rgba(0,229,255,0.4); color: var(--cyan); }
+    .ctrl-btn.reset:hover:not(:disabled) { background: var(--cyan); color: #090c10; }
+    .ctrl-btn.secondary { background: rgba(255,255,255,0.05); border-color: var(--border-glass); color: var(--ink-secondary); }
+    .ctrl-btn.secondary:hover:not(:disabled) { background: rgba(255,255,255,0.12); color: #fff; }
+
+    /* TIMER INPUT */
+    .timer-row { display: flex; align-items: center; gap: 12px; margin-bottom: 28px; flex-wrap: wrap; }
+    .timer-label { font-family: var(--font-mono); font-size: 11px; font-weight: 700; letter-spacing: 0.1em; color: var(--ink-dim); }
+    .timer-input {
+      width: 100px; padding: 10px 14px; background: rgba(9,12,16,0.6); border: 1px solid var(--border-glass);
+      border-radius: var(--radius-md); font-family: var(--font-mono); font-size: 14px; font-weight: 700;
+      color: var(--gold); text-align: center; outline: none;
+    }
+    .timer-input:focus { border-color: var(--gold); box-shadow: 0 0 12px var(--gold-glow); }
+
+    /* ANNOUNCEMENT */
+    .announce-row { display: flex; gap: 10px; margin-bottom: 28px; }
+    .announce-input {
+      flex: 1; padding: 12px 16px; background: rgba(9,12,16,0.6); border: 1px solid var(--border-glass);
+      border-radius: var(--radius-md); font-family: var(--font-sans); font-size: 14px;
+      color: #fff; outline: none;
+    }
+    .announce-input:focus { border-color: var(--gold); box-shadow: 0 0 12px var(--gold-glow); }
+    .announce-input::placeholder { color: var(--ink-dim); }
+
+    /* ELAPSED & REMAINING DISPLAY */
+    .timer-display {
+      display: flex; gap: 24px; margin-bottom: 28px; align-items: center;
+    }
+    .timer-block { display: flex; flex-direction: column; align-items: center; }
+    .timer-block .timer-value { font-family: var(--font-mono); font-size: 36px; font-weight: 700; color: var(--gold); }
+    .timer-block .timer-sub { font-family: var(--font-mono); font-size: 9px; font-weight: 700; letter-spacing: 0.14em; color: var(--ink-dim); text-transform: uppercase; }
+
+    /* LEADERBOARD TABLE */
+    .leaderboard-section { margin-top: 8px; }
+    .leaderboard-section h2 {
+      font-family: var(--font-display); font-size: 16px; font-weight: 800;
+      letter-spacing: 0.06em; margin-bottom: 14px; display: flex; align-items: center; gap: 10px;
+    }
+    .leaderboard-search {
+      width: 100%; max-width: 300px; padding: 10px 14px; background: rgba(9,12,16,0.6);
+      border: 1px solid var(--border-glass); border-radius: var(--radius-md);
+      font-family: var(--font-sans); font-size: 13px; color: #fff; outline: none; margin-bottom: 14px;
+    }
+    .leaderboard-search:focus { border-color: var(--gold); box-shadow: 0 0 10px var(--gold-glow); }
+    .leaderboard-search::placeholder { color: var(--ink-dim); }
+
+    .lb-table { width: 100%; border-collapse: collapse; }
+    .lb-table th {
+      font-family: var(--font-mono); font-size: 10px; font-weight: 700; letter-spacing: 0.12em;
+      color: var(--ink-dim); text-transform: uppercase; text-align: left; padding: 10px 14px;
+      border-bottom: 1px solid var(--border-subtle); background: rgba(9,12,16,0.3);
+    }
+    .lb-table td {
+      font-family: var(--font-sans); font-size: 13px; padding: 12px 14px;
+      border-bottom: 1px solid var(--border-subtle); vertical-align: middle;
+    }
+    .lb-table tr:hover td { background: rgba(245,197,24,0.04); }
+    .lb-table .rank-cell { font-family: var(--font-mono); font-weight: 800; color: var(--gold); width: 50px; }
+    .lb-table .name-cell { font-weight: 700; color: #fff; }
+    .lb-table .time-cell { font-family: var(--font-mono); font-weight: 700; color: var(--emerald); }
+    .lb-table .status-cell { font-family: var(--font-mono); font-size: 11px; font-weight: 700; letter-spacing: 0.06em; }
+    .status-tag {
+      display: inline-block; padding: 3px 10px; border-radius: var(--radius-pill);
+      font-size: 10px; font-weight: 700; letter-spacing: 0.06em;
+    }
+    .status-tag.solved { background: rgba(16,185,129,0.15); color: var(--emerald); border: 1px solid rgba(16,185,129,0.3); }
+    .status-tag.playing { background: rgba(0,229,255,0.1); color: var(--cyan); border: 1px solid rgba(0,229,255,0.3); }
+    .status-tag.waiting { background: rgba(245,197,24,0.1); color: var(--gold); border: 1px solid rgba(245,197,24,0.3); }
+    .status-tag.disconnected { background: rgba(255,71,87,0.1); color: var(--coral); border: 1px solid rgba(255,71,87,0.3); }
+
+    .kick-btn {
+      background: transparent; border: 1px solid rgba(255,71,87,0.3); color: var(--coral);
+      padding: 4px 10px; border-radius: var(--radius-md); font-family: var(--font-mono);
+      font-size: 10px; font-weight: 700; cursor: pointer; transition: all 0.15s;
+    }
+    .kick-btn:hover { background: var(--coral); color: #fff; }
+
+    /* EMPTY STATE */
+    .empty-lb { text-align: center; padding: 40px; color: var(--ink-dim); font-family: var(--font-mono); font-size: 12px; }
+    .empty-lb .icon { font-size: 32px; margin-bottom: 8px; opacity: 0.5; }
+
+    /* RESPONSIVE */
+    @media (max-width: 640px) {
+      .admin-header { flex-direction: column; gap: 12px; align-items: flex-start; }
+      .controls-section { flex-direction: column; }
+      .ctrl-btn { width: 100%; justify-content: center; }
+      .timer-display { flex-direction: column; gap: 12px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- PIN Authentication Overlay -->
+<div id="pinOverlay">
+  <div class="pin-card">
+    <h1>🔐 ADMIN ACCESS</h1>
+    <p>Enter the admin PIN to access Mission Control</p>
+    <input type="password" id="pinInput" class="pin-input" maxlength="20" placeholder="• • • •" autofocus />
+    <div id="pinError" class="pin-error">Invalid PIN. Try again.</div>
+    <button id="pinSubmitBtn" class="pin-btn">AUTHENTICATE</button>
+  </div>
+</div>
+
+<!-- Main Admin Panel -->
+<div class="admin-container" id="adminPanel" style="display:none;">
+
+  <header class="admin-header">
+    <div class="admin-brand">
+      <div>
+        <h1>🎯 MISSION CONTROL</h1>
+        <div class="admin-brand-tag">EPIC SPECIAL PHOTOBOOTH • ADMIN DASHBOARD</div>
+      </div>
+    </div>
+    <div id="statusBadge" class="admin-status-badge lobby">
+      <span class="dot"></span>
+      <span id="statusLabel">LOBBY</span>
+    </div>
+  </header>
+
+  <!-- Live Stats -->
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-label">CONNECTED PLAYERS</div>
+      <div class="stat-value cyan" id="statConnected">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">TOTAL REGISTERED</div>
+      <div class="stat-value" id="statTotal">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">PUZZLES SOLVED</div>
+      <div class="stat-value emerald" id="statSolved">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">CURRENTLY PLAYING</div>
+      <div class="stat-value cyan" id="statPlaying">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">FASTEST TIME</div>
+      <div class="stat-value emerald" id="statFastest">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">AVG SOLVE TIME</div>
+      <div class="stat-value" id="statAvgTime">—</div>
+    </div>
+  </div>
+
+  <!-- Timer Display -->
+  <div class="timer-display" id="timerDisplay" style="display:none;">
+    <div class="timer-block">
+      <div class="timer-value" id="elapsedDisplay">00:00</div>
+      <div class="timer-sub">ELAPSED</div>
+    </div>
+    <div class="timer-block" id="remainingBlock" style="display:none;">
+      <div class="timer-value" id="remainingDisplay" style="color:var(--coral);">00:00</div>
+      <div class="timer-sub">REMAINING</div>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div class="controls-section">
+    <button id="startBtn" class="ctrl-btn start">▶ START TOURNAMENT</button>
+    <button id="stopBtn" class="ctrl-btn stop" disabled>■ STOP TOURNAMENT</button>
+    <button id="resetBtn" class="ctrl-btn reset">↻ RESET SCORES</button>
+    <button id="csvBtn" class="ctrl-btn secondary">📊 EXPORT CSV</button>
+  </div>
+
+  <!-- Timer Setting -->
+  <div class="timer-row">
+    <span class="timer-label">TOURNAMENT TIMER (seconds, 0 = unlimited):</span>
+    <input type="number" id="timerInput" class="timer-input" value="0" min="0" step="30" />
+    <button id="setTimerBtn" class="ctrl-btn secondary" style="padding:10px 20px; font-size:11px;">SET TIMER</button>
+  </div>
+
+  <!-- Announcement -->
+  <div class="announce-row">
+    <input type="text" id="announceInput" class="announce-input" placeholder="Type a live announcement to all players…" maxlength="200" />
+    <button id="announceBtn" class="ctrl-btn secondary" style="padding:10px 20px; font-size:11px; white-space:nowrap;">📢 BROADCAST</button>
+  </div>
+
+  <!-- Leaderboard -->
+  <div class="leaderboard-section">
+    <h2>🏆 LIVE LEADERBOARD</h2>
+    <input type="text" id="lbSearch" class="leaderboard-search" placeholder="Search player name…" />
+    <div id="leaderboardBody">
+      <div class="empty-lb">
+        <div class="icon">👥</div>
+        <div>No players registered yet. Share the game URL to get started!</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  // ── WebSocket Connection ──
+  let ws = null;
+  let reconnectTimer = null;
+  let authenticated = false;
+
+  const pinOverlay = document.getElementById("pinOverlay");
+  const pinInput = document.getElementById("pinInput");
+  const pinSubmitBtn = document.getElementById("pinSubmitBtn");
+  const pinError = document.getElementById("pinError");
+  const adminPanel = document.getElementById("adminPanel");
+
+  // Stats
+  const statConnected = document.getElementById("statConnected");
+  const statTotal = document.getElementById("statTotal");
+  const statSolved = document.getElementById("statSolved");
+  const statPlaying = document.getElementById("statPlaying");
+  const statFastest = document.getElementById("statFastest");
+  const statAvgTime = document.getElementById("statAvgTime");
+
+  // Controls
+  const startBtn = document.getElementById("startBtn");
+  const stopBtn = document.getElementById("stopBtn");
+  const resetBtn = document.getElementById("resetBtn");
+  const csvBtn = document.getElementById("csvBtn");
+  const setTimerBtn = document.getElementById("setTimerBtn");
+  const timerInput = document.getElementById("timerInput");
+  const announceInput = document.getElementById("announceInput");
+  const announceBtn = document.getElementById("announceBtn");
+
+  // Status
+  const statusBadge = document.getElementById("statusBadge");
+  const statusLabel = document.getElementById("statusLabel");
+
+  // Timer
+  const timerDisplay = document.getElementById("timerDisplay");
+  const elapsedDisplay = document.getElementById("elapsedDisplay");
+  const remainingBlock = document.getElementById("remainingBlock");
+  const remainingDisplay = document.getElementById("remainingDisplay");
+
+  // Leaderboard
+  const leaderboardBody = document.getElementById("leaderboardBody");
+  const lbSearch = document.getElementById("lbSearch");
+
+  let currentLeaderboard = [];
+  let currentState = "LOBBY";
+
+  function formatTimeMM(totalSeconds) {
+    if (totalSeconds == null) return "—";
+    const m = Math.floor(totalSeconds / 60);
+    const s = Math.floor(totalSeconds % 60);
+    return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  }
+
+  function formatTimeSolve(seconds) {
+    if (seconds == null) return "—";
+    const m = Math.floor(seconds / 60);
+    const s = Math.floor(seconds % 60);
+    const ms = Math.floor((seconds * 10) % 10);
+    return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}.${ms}`;
+  }
+
+  function connectWS() {
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    ws = new WebSocket(`${proto}//${location.host}`);
+
+    ws.onopen = () => {
+      console.log("[Admin] WebSocket connected.");
+      if (authenticated) {
+        // Re-auth on reconnect
+        ws.send(JSON.stringify({ type: "ADMIN_AUTH", pin: pinInput.value }));
+      }
+    };
+
+    ws.onmessage = (event) => {
+      const msg = JSON.parse(event.data);
+      handleMessage(msg);
+    };
+
+    ws.onclose = () => {
+      console.log("[Admin] WebSocket disconnected. Reconnecting in 2s…");
+      clearTimeout(reconnectTimer);
+      reconnectTimer = setTimeout(connectWS, 2000);
+    };
+
+    ws.onerror = () => {};
+  }
+
+  function sendMsg(obj) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(obj));
+    }
+  }
+
+  function handleMessage(msg) {
+    switch (msg.type) {
+      case "ADMIN_AUTH_OK":
+        authenticated = true;
+        pinOverlay.classList.add("hidden");
+        adminPanel.style.display = "block";
+        updateState(msg.tournamentState);
+        updateStats(msg.stats);
+        if (msg.leaderboard) renderLeaderboard(msg.leaderboard);
+        if (msg.timerDuration) timerInput.value = msg.timerDuration;
+        break;
+
+      case "ADMIN_AUTH_FAIL":
+        pinError.style.display = "block";
+        pinInput.value = "";
+        pinInput.focus();
+        break;
+
+      case "TOURNAMENT_STATE":
+        updateState(msg.state);
+        updateStats(msg.stats);
+        updateTimerDisplay(msg.elapsed, msg.remaining);
+        break;
+
+      case "LEADERBOARD_UPDATE":
+        currentLeaderboard = msg.leaderboard || [];
+        updateStats(msg.stats);
+        renderLeaderboard(currentLeaderboard);
+        updateTimerDisplay(msg.elapsed, msg.remaining);
+        break;
+
+      case "TOURNAMENT_START":
+        updateState("ACTIVE");
+        break;
+
+      case "TOURNAMENT_END":
+        updateState("ENDED");
+        if (msg.leaderboard) renderLeaderboard(msg.leaderboard);
+        updateStats(msg.stats);
+        break;
+
+      case "TOURNAMENT_RESET":
+        updateState("LOBBY");
+        currentLeaderboard = [];
+        renderLeaderboard([]);
+        break;
+
+      case "CSV_DATA":
+        downloadCSV(msg.csv);
+        break;
+    }
+  }
+
+  function updateState(state) {
+    currentState = state;
+    statusBadge.className = `admin-status-badge ${state.toLowerCase()}`;
+    statusLabel.textContent = state;
+
+    startBtn.disabled = (state === "ACTIVE");
+    stopBtn.disabled = (state !== "ACTIVE");
+
+    if (state === "ACTIVE" || state === "ENDED") {
+      timerDisplay.style.display = "flex";
+    } else {
+      timerDisplay.style.display = "none";
+    }
+  }
+
+  function updateStats(stats) {
+    if (!stats) return;
+    statConnected.textContent = stats.connected || 0;
+    statTotal.textContent = stats.totalPlayers || 0;
+    statSolved.textContent = stats.solved || 0;
+    statPlaying.textContent = stats.playing || 0;
+    statFastest.textContent = stats.fastestTime != null ? formatTimeSolve(stats.fastestTime) : "—";
+    statAvgTime.textContent = stats.avgTime != null ? formatTimeSolve(stats.avgTime) : "—";
+  }
+
+  function updateTimerDisplay(elapsed, remaining) {
+    elapsedDisplay.textContent = formatTimeMM(elapsed);
+    if (remaining != null) {
+      remainingBlock.style.display = "flex";
+      remainingDisplay.textContent = formatTimeMM(remaining);
+    } else {
+      remainingBlock.style.display = "none";
+    }
+  }
+
+  function renderLeaderboard(entries) {
+    const searchTerm = lbSearch.value.toLowerCase().trim();
+    let filtered = entries;
+    if (searchTerm) {
+      filtered = entries.filter((e) => e.name.toLowerCase().includes(searchTerm));
+    }
+
+    if (filtered.length === 0) {
+      leaderboardBody.innerHTML = `
+        <div class="empty-lb">
+          <div class="icon">👥</div>
+          <div>${entries.length === 0 ? "No players registered yet." : "No matching players found."}</div>
+        </div>
+      `;
+      return;
+    }
+
+    let html = `<table class="lb-table">
+      <thead><tr>
+        <th>RANK</th><th>NAME</th><th>SOLVE TIME</th><th>STATUS</th><th></th>
+      </tr></thead><tbody>`;
+
+    filtered.forEach((e) => {
+      const rankDisplay = e.rank ? (e.rank === 1 ? "🥇" : e.rank === 2 ? "🥈" : e.rank === 3 ? "🥉" : `#${e.rank}`) : "—";
+      const statusClass = e.status || "waiting";
+      html += `<tr>
+        <td class="rank-cell">${rankDisplay}</td>
+        <td class="name-cell">${escapeHtml(e.name)}</td>
+        <td class="time-cell">${e.solveTime != null ? formatTimeSolve(e.solveTime) : "—"}</td>
+        <td class="status-cell"><span class="status-tag ${statusClass}">${statusClass.toUpperCase()}</span></td>
+        <td><button class="kick-btn" onclick="kickPlayer('${e.id}')">KICK</button></td>
+      </tr>`;
+    });
+
+    html += "</tbody></table>";
+    leaderboardBody.innerHTML = html;
+  }
+
+  function escapeHtml(text) {
+    const div = document.createElement("div");
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+  function kickPlayer(playerId) {
+    if (confirm(`Kick player ${playerId}?`)) {
+      sendMsg({ type: "ADMIN_KICK", playerId });
+    }
+  }
+
+  function downloadCSV(csv) {
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `epic_tournament_results_${Date.now()}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  }
+
+  // ── Event Listeners ──
+  pinSubmitBtn.addEventListener("click", () => {
+    const pin = pinInput.value.trim();
+    if (!pin) return;
+    pinError.style.display = "none";
+    sendMsg({ type: "ADMIN_AUTH", pin });
+  });
+
+  pinInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") pinSubmitBtn.click();
+  });
+
+  startBtn.addEventListener("click", () => sendMsg({ type: "ADMIN_START" }));
+  stopBtn.addEventListener("click", () => {
+    if (confirm("Stop the tournament? All unsolved players will be marked as unfinished.")) {
+      sendMsg({ type: "ADMIN_STOP" });
+    }
+  });
+  resetBtn.addEventListener("click", () => {
+    if (confirm("Reset all scores? Player registrations will be kept.")) {
+      sendMsg({ type: "ADMIN_RESET" });
+    }
+  });
+  csvBtn.addEventListener("click", () => sendMsg({ type: "ADMIN_GET_CSV" }));
+
+  setTimerBtn.addEventListener("click", () => {
+    const duration = parseInt(timerInput.value) || 0;
+    sendMsg({ type: "ADMIN_SET_TIMER", duration });
+  });
+
+  announceBtn.addEventListener("click", () => {
+    const message = announceInput.value.trim();
+    if (!message) return;
+    sendMsg({ type: "ADMIN_ANNOUNCE", message });
+    announceInput.value = "";
+  });
+
+  announceInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") announceBtn.click();
+  });
+
+  lbSearch.addEventListener("input", () => renderLeaderboard(currentLeaderboard));
+
+  // Boot
+  connectWS();
+</script>
+</body>
+</html>

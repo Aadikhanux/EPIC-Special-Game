@@ -1,9 +1,10 @@
 import {
   FilesetResolver,
+  FaceDetector,
   HandLandmarker,
 } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
 
-// ── Landmark constants ────────────────────────────────────────────────────────
+// ── Landmark constants (Hand) ────────────────────────────────────────────────
 const LM = {
   WRIST: 0,
   THUMB_TIP: 4,
@@ -18,26 +19,14 @@ const LM = {
 };
 
 const PINCH_THRESHOLD = 0.055;
-const FRAME_PADDING = 28;
-const FREEZE_HOLD_MS = 250;
 const COUNTDOWN_SECONDS = 3;
 const FIST_HOLD_FRAMES = 12;
 const GRID = 3;
 const LOAD_TIMEOUT_MS = 20000;
-const SWAP_ANIM_MS = 180;
 
 const PHOTOBOOTH_CONTRAST_ALPHA = 1.3;
 const PHOTOBOOTH_BRIGHTNESS_BETA = 10;
 const PHOTOBOOTH_NOISE_STD = 15;
-
-const HAND_CONNECTIONS = [
-  [0, 1], [1, 2], [2, 3], [3, 4],
-  [0, 5], [5, 6], [6, 7], [7, 8],
-  [5, 9], [9, 10], [10, 11], [11, 12],
-  [9, 13], [13, 14], [14, 15], [15, 16],
-  [13, 17], [17, 18], [18, 19], [19, 20],
-  [0, 17],
-];
 
 // ── DOM Elements ──────────────────────────────────────────────────────────────
 const videoEl = document.getElementById("webcam");
@@ -56,9 +45,8 @@ const progressBadge = document.getElementById("progressBadge");
 const progressText = document.getElementById("progressText");
 const puzzleTimerText = document.getElementById("puzzleTimerText");
 
-const turnIndicator = document.getElementById("turnIndicator");
-const turnAvatar = document.getElementById("turnAvatar");
-const turnText = document.getElementById("turnText");
+const rankBadge = document.getElementById("rankBadge");
+const rankValue = document.getElementById("rankValue");
 
 const gestureIcon = document.getElementById("gestureIcon");
 const gestureTitle = document.getElementById("gestureTitle");
@@ -70,37 +58,59 @@ const galleryEmpty = document.getElementById("galleryEmpty");
 const galleryCount = document.getElementById("galleryCount");
 const downloadStripBtn = document.getElementById("downloadStripBtn");
 const downloadVideoBtn = document.getElementById("downloadVideoBtn");
-const resetAllBtn = document.getElementById("resetAllBtn");
-const stripCompleteMsg = document.getElementById("stripCompleteMsg");
 const recIndicator = document.getElementById("recIndicator");
 const flashOverlay = document.getElementById("flashOverlay");
 
+const snapBtn = document.getElementById("snapBtn");
+const mobileSnapBtn = document.getElementById("mobileSnapBtn");
 const retakeBtn = document.getElementById("retakeBtn");
 const soundToggleBtn = document.getElementById("soundToggleBtn");
 const soundIconOn = document.getElementById("soundIconOn");
 const soundIconOff = document.getElementById("soundIconOff");
-const fullscreenBtn = document.getElementById("fullscreenBtn");
 const helpBtn = document.getElementById("helpBtn");
-
-const stripModal = document.getElementById("stripModal");
-const stripPreviewCanvas = document.getElementById("stripPreviewCanvas");
-const stripModalDownload = document.getElementById("stripModalDownload");
-const stripModalClose = document.getElementById("stripModalClose");
-const stripModalCloseIcon = document.getElementById("stripModalCloseIcon");
+const mobileLbToggleBtn = document.getElementById("mobileLbToggleBtn");
+const closeDrawerBtn = document.getElementById("closeDrawerBtn");
+const sidebarDrawer = document.getElementById("gallery");
 
 const nameEntryModal = document.getElementById("nameEntryModal");
+const playerNameInput = document.getElementById("playerNameInput");
 const startGameBtn = document.getElementById("startGameBtn");
+
+const lobbyModal = document.getElementById("lobbyModal");
+const lobbyTitle = document.getElementById("lobbyTitle");
+const lobbySubtitle = document.getElementById("lobbySubtitle");
+const lobbyPlayerCount = document.getElementById("lobbyPlayerCount");
+const lobbyAnnounce = document.getElementById("lobbyAnnounce");
+const lobbyAnnounceText = document.getElementById("lobbyAnnounceText");
+
+const announceBanner = document.getElementById("announceBanner");
+const announceText = document.getElementById("announceText");
 
 const leaderboardModal = document.getElementById("leaderboardModal");
 const leaderboardEntries = document.getElementById("leaderboardEntries");
 const leaderboardWinner = document.getElementById("leaderboardWinner");
-const leaderboardSubtitle = document.getElementById("leaderboardSubtitle");
-const playAgainBtn = document.getElementById("playAgainBtn");
-const viewStripBtn = document.getElementById("viewStripBtn");
+
+const solveResultModal = document.getElementById("solveResultModal");
+const solveResultEmoji = document.getElementById("solveResultEmoji");
+const solveResultTitle = document.getElementById("solveResultTitle");
+const solveResultTime = document.getElementById("solveResultTime");
+const solveResultRank = document.getElementById("solveResultRank");
+const solveResultViewLB = document.getElementById("solveResultViewLB");
+const solveResultClose = document.getElementById("solveResultClose");
+
+const endedModal = document.getElementById("endedModal");
+const endedWinner = document.getElementById("endedWinner");
+const endedEntries = document.getElementById("endedEntries");
+const endedCloseBtn = document.getElementById("endedCloseBtn");
 
 const helpModal = document.getElementById("helpModal");
 const helpModalClose = document.getElementById("helpModalClose");
 const helpModalCloseIcon = document.getElementById("helpModalCloseIcon");
+
+const tsState = document.getElementById("tsState");
+const tsPlayers = document.getElementById("tsPlayers");
+const tsElapsed = document.getElementById("tsElapsed");
+const tsElapsedRow = document.getElementById("tsElapsedRow");
 
 // ── Audio engine ──────────────────────────────────────────────────────────────
 let soundMuted = false;
@@ -303,16 +313,263 @@ function downloadVideo() {
   setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
 
+// ── WebSocket Tournament Client ───────────────────────────────────────────────
+let ws = null;
+let reconnectTimer = null;
+let myPlayer = {
+  id: null,
+  name: "",
+  solveTime: null,
+  rank: null,
+  photoCanvas: null,
+};
+
+let serverTournamentState = "LOBBY"; // LOBBY | ACTIVE | ENDED
+let globalLeaderboard = [];
+
+function connectWebSocket() {
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  ws = new WebSocket(`${proto}//${location.host}`);
+
+  ws.onopen = () => {
+    console.log("[Tournament WS] Connected.");
+    if (myPlayer.name) {
+      ws.send(JSON.stringify({ type: "PLAYER_JOIN", name: myPlayer.name }));
+    }
+  };
+
+  ws.onmessage = (event) => {
+    try {
+      const msg = JSON.parse(event.data);
+      handleServerMessage(msg);
+    } catch (e) {
+      console.error("[Tournament WS] Parse error:", e);
+    }
+  };
+
+  ws.onclose = () => {
+    console.log("[Tournament WS] Disconnected. Reconnecting in 3s…");
+    clearTimeout(reconnectTimer);
+    reconnectTimer = setTimeout(connectWebSocket, 3000);
+  };
+
+  ws.onerror = (err) => {
+    console.warn("[Tournament WS] Error:", err);
+  };
+}
+
+function sendWS(data) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(data));
+  }
+}
+
+function handleServerMessage(msg) {
+  switch (msg.type) {
+    case "PLAYER_REGISTERED":
+      myPlayer.id = msg.playerId;
+      myPlayer.name = msg.name;
+      serverTournamentState = msg.tournamentState || "LOBBY";
+      updateTournamentStateUI(serverTournamentState, msg.stats, msg.elapsed);
+
+      // STRICT CONTEST LOCK: Show Lobby modal if contest is not ACTIVE
+      if (serverTournamentState !== "ACTIVE") {
+        lobbyModal.classList.remove("hidden");
+        statusDot.className = "status-dot";
+        statusText.textContent = "🔒 Contest locked — waiting for admin";
+      } else {
+        lobbyModal.classList.add("hidden");
+        statusDot.className = "status-dot live";
+        statusText.textContent = `${myPlayer.name} — Contest Live! Align face & SNAP`;
+      }
+      break;
+
+    case "TOURNAMENT_STATE":
+      serverTournamentState = msg.state;
+      updateTournamentStateUI(serverTournamentState, msg.stats, msg.elapsed);
+      if (msg.announcement) showAnnouncement(msg.announcement);
+
+      // STRICT LOCK UPDATE
+      if (serverTournamentState !== "ACTIVE" && appState !== "puzzle" && appState !== "shattering") {
+        lobbyModal.classList.remove("hidden");
+        statusDot.className = "status-dot";
+        statusText.textContent = "🔒 Contest locked — waiting for admin";
+      }
+      break;
+
+    case "TOURNAMENT_START":
+      serverTournamentState = "ACTIVE";
+      lobbyModal.classList.add("hidden");
+      endedModal.classList.add("hidden");
+      updateTournamentStateUI("ACTIVE");
+      playTone({ freq: 880, type: "sine", gain: 0.2, duration: 0.3 });
+      soundComplete();
+      statusDot.className = "status-dot live";
+      statusText.textContent = `${myPlayer.name || "Player"} — Contest live! Align face & SNAP`;
+      break;
+
+    case "TOURNAMENT_END":
+      serverTournamentState = "ENDED";
+      updateTournamentStateUI("ENDED", msg.stats, msg.elapsed);
+      if (msg.leaderboard) {
+        globalLeaderboard = msg.leaderboard;
+        renderSidebarLeaderboard(globalLeaderboard);
+        renderEndedModal(globalLeaderboard);
+      }
+      endedModal.classList.remove("hidden");
+      statusDot.className = "status-dot";
+      statusText.textContent = "Contest ended!";
+      break;
+
+    case "TOURNAMENT_RESET":
+      serverTournamentState = "LOBBY";
+      myPlayer.solveTime = null;
+      myPlayer.rank = null;
+      resetPuzzleOnly();
+      updateTournamentStateUI("LOBBY");
+      lobbyModal.classList.remove("hidden");
+      statusDot.className = "status-dot";
+      statusText.textContent = "🔒 Contest reset — waiting in lobby";
+      break;
+
+    case "LEADERBOARD_UPDATE":
+      globalLeaderboard = msg.leaderboard || [];
+      renderSidebarLeaderboard(globalLeaderboard);
+      updateTournamentStateUI(serverTournamentState, msg.stats, msg.elapsed);
+
+      const myEntry = globalLeaderboard.find((e) => e.id === myPlayer.id);
+      if (myEntry && myEntry.rank != null) {
+        myPlayer.rank = myEntry.rank;
+        rankBadge.classList.remove("hidden");
+        rankValue.textContent = `#${myEntry.rank}`;
+      }
+      break;
+
+    case "SOLVE_CONFIRMED":
+      myPlayer.solveTime = msg.solveTime;
+      myPlayer.rank = msg.rank;
+      rankBadge.classList.remove("hidden");
+      rankValue.textContent = `#${msg.rank}`;
+
+      solveResultEmoji.textContent = msg.rank === 1 ? "👑" : msg.rank <= 3 ? "🏆" : "🎉";
+      solveResultTitle.textContent = msg.rank === 1 ? "1st PLACE!" : `RANK #${msg.rank}`;
+      solveResultTime.textContent = formatTime(msg.solveTime);
+      solveResultRank.textContent = `Global Rank: #${msg.rank} of ${msg.totalSolved} solvers`;
+      solveResultModal.classList.remove("hidden");
+      spawnConfetti(120);
+      soundComplete();
+      break;
+
+    case "ANNOUNCEMENT":
+      showAnnouncement(msg.message);
+      break;
+
+    case "KICKED":
+      alert("You have been disconnected by the tournament admin.");
+      location.reload();
+      break;
+  }
+}
+
+function updateTournamentStateUI(state, stats, elapsed) {
+  tsState.textContent = state;
+  tsState.className = `ts-value ts-${state.toLowerCase()}`;
+  if (stats) {
+    tsPlayers.textContent = `${stats.connected} (${stats.solved} solved)`;
+    lobbyPlayerCount.textContent = stats.connected;
+  }
+  if (elapsed != null && elapsed > 0) {
+    tsElapsedRow.style.display = "flex";
+    const m = Math.floor(elapsed / 60);
+    const s = Math.floor(elapsed % 60);
+    tsElapsed.textContent = `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  } else {
+    tsElapsedRow.style.display = "none";
+  }
+}
+
+function showAnnouncement(msg) {
+  if (!msg) return;
+  announceText.textContent = msg;
+  announceBanner.classList.remove("hidden");
+  lobbyAnnounceText.textContent = msg;
+  lobbyAnnounce.classList.remove("hidden");
+  setTimeout(() => announceBanner.classList.add("hidden"), 8000);
+}
+
+function renderSidebarLeaderboard(entries) {
+  galleryCount.textContent = `${entries.filter(e => e.solveTime != null).length} solved`;
+  if (entries.length === 0) {
+    if (galleryEmpty) galleryEmpty.style.display = "flex";
+    return;
+  }
+  if (galleryEmpty) galleryEmpty.style.display = "none";
+
+  const container = document.getElementById("galleryStrip");
+  container.innerHTML = "";
+
+  entries.slice(0, 30).forEach((e) => {
+    const row = document.createElement("div");
+    let medalClass = "";
+    if (e.rank === 1) medalClass = "gold-row";
+    else if (e.rank === 2) medalClass = "silver-row";
+    else if (e.rank === 3) medalClass = "bronze-row";
+    if (e.id === myPlayer.id) medalClass += " self-row";
+
+    row.className = `lb-sidebar-row ${medalClass}`;
+    const rankDisplay = e.rank === 1 ? "🥇" : e.rank === 2 ? "🥈" : e.rank === 3 ? "🥉" : `#${e.rank || "-"}`;
+
+    row.innerHTML = `
+      <span class="lb-rank">${rankDisplay}</span>
+      <div class="lb-info">
+        <span class="lb-name">${escapeHtml(e.name)}${e.id === myPlayer.id ? " (You)" : ""}</span>
+        <span class="lb-time">${e.solveTime != null ? formatTime(e.solveTime) : "Playing…"}</span>
+      </div>
+    `;
+    container.appendChild(row);
+  });
+}
+
+function renderEndedModal(entries) {
+  endedEntries.innerHTML = "";
+  const medals = ["gold", "silver", "bronze"];
+  const sorted = entries.filter((e) => e.solveTime != null);
+
+  if (sorted.length === 0) {
+    endedWinner.textContent = "Tournament Ended";
+    return;
+  }
+
+  sorted.slice(0, 10).forEach((p, i) => {
+    const row = document.createElement("div");
+    row.className = `leaderboard-row ${medals[i] || ""}`;
+    const rank = document.createElement("span");
+    rank.className = "leaderboard-rank";
+    rank.textContent = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `#${i + 1}`;
+    const name = document.createElement("span");
+    name.className = "leaderboard-name";
+    name.textContent = p.name;
+    const time = document.createElement("span");
+    time.className = "leaderboard-time";
+    time.textContent = formatTime(p.solveTime);
+    row.appendChild(rank);
+    row.appendChild(name);
+    row.appendChild(time);
+    endedEntries.appendChild(row);
+  });
+
+  const winner = sorted[0];
+  endedWinner.textContent = `🏆 WINNER: ${winner.name} with ${formatTime(winner.solveTime)}!`;
+}
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str;
+  return div.innerHTML;
+}
+
 // ── App state ─────────────────────────────────────────────────────────────────
 let appState = "tracking"; // 'tracking' | 'countdown' | 'puzzle' | 'shattering'
-let gamePhase = "names"; // 'names' | 'playing' | 'results'
-
-const players = [
-  { name: "Player 1", time: null, photo: null },
-  { name: "Player 2", time: null, photo: null },
-  { name: "Player 3", time: null, photo: null },
-];
-let currentPlayerIndex = 0;
 
 const puzzle = {
   boardBox: null,
@@ -325,6 +582,19 @@ const puzzle = {
   fullPhotoboothCanvas: null,
 };
 
+const smoothFaceBox = {
+  x: 0,
+  y: 0,
+  width: 0,
+  height: 0,
+  initialized: false,
+  detected: false,
+  lastSeenAt: 0,
+};
+
+const countdown = { active: false, startedAt: 0 };
+let lastCountdownN = -1;
+
 const SHATTER_COLS = 6;
 const SHATTER_ROWS = 6;
 const SHATTER_DURATION_MS = 850;
@@ -334,191 +604,6 @@ const shatter = {
   fragments: [],
   pendingCanvas: null,
 };
-
-const STRIP_MAX_PHOTOS = 3;
-const galleryEntries = [];
-
-function addToGallery(snapshotCanvas) {
-  if (galleryEntries.length >= STRIP_MAX_PHOTOS) return;
-  galleryEntries.push({
-    canvas: snapshotCanvas,
-    time: Date.now(),
-    playerName: players[currentPlayerIndex]?.name || `Player ${currentPlayerIndex + 1}`,
-    playerTime: players[currentPlayerIndex]?.time || 0,
-  });
-  renderGalleryThumb(snapshotCanvas, galleryEntries.length, players[currentPlayerIndex]?.name);
-  galleryCount.textContent = `${galleryEntries.length} / ${STRIP_MAX_PHOTOS}`;
-  if (galleryEmpty) galleryEmpty.style.display = "none";
-  if (galleryEntries.length >= STRIP_MAX_PHOTOS) showStripComplete();
-  players[currentPlayerIndex].photo = snapshotCanvas;
-}
-
-function isStripFull() {
-  return galleryEntries.length >= STRIP_MAX_PHOTOS;
-}
-
-function showStripComplete() {
-  if (stripCompleteMsg) stripCompleteMsg.classList.add("visible");
-  updateStripDownloadAvailability();
-  spawnConfetti(120);
-  setTimeout(() => showStripModal(), 1000);
-}
-
-function hideStripComplete() {
-  if (stripCompleteMsg) stripCompleteMsg.classList.remove("visible");
-}
-
-function updateStripDownloadAvailability() {
-  if (!downloadStripBtn) return;
-  downloadStripBtn.disabled = galleryEntries.length === 0;
-}
-
-const STRIP_FILE_BORDER = 28;
-const STRIP_FILE_GAP = 20;
-
-function buildStripCanvas() {
-  if (galleryEntries.length === 0) return null;
-  const polaroids = galleryEntries.map((entry, i) =>
-    makePolaroid(entry.canvas, i + 1, entry.playerName, entry.playerTime)
-  );
-  const totalW = polaroids[0].width + STRIP_FILE_BORDER * 2;
-  const totalH =
-    STRIP_FILE_BORDER * 2 +
-    polaroids.reduce((sum, p) => sum + p.height, 0) +
-    STRIP_FILE_GAP * (polaroids.length - 1) +
-    40;
-
-  const sc = document.createElement("canvas");
-  sc.width = totalW;
-  sc.height = totalH;
-  const sCtx = sc.getContext("2d");
-
-  // Vintage cream photobooth card
-  sCtx.fillStyle = "#fcfaf6";
-  sCtx.fillRect(0, 0, totalW, totalH);
-
-  // Subtle border outline
-  sCtx.strokeStyle = "#e2ded4";
-  sCtx.lineWidth = 2;
-  sCtx.strokeRect(4, 4, totalW - 8, totalH - 8);
-
-  let cursorY = STRIP_FILE_BORDER;
-  polaroids.forEach((p) => {
-    sCtx.drawImage(p, STRIP_FILE_BORDER, cursorY);
-    cursorY += p.height + STRIP_FILE_GAP;
-  });
-
-  // Footer stamp
-  sCtx.fillStyle = "#9a9486";
-  sCtx.font = "bold 11px 'IBM Plex Mono', monospace";
-  sCtx.textAlign = "center";
-  sCtx.fillText("★ EPIC SPECIAL PHOTOBOOTH STRIP ★", totalW / 2, totalH - 18);
-
-  return sc;
-}
-
-function downloadPhotoStrip() {
-  const sc = buildStripCanvas();
-  if (!sc) return;
-  sc.toBlob((blob) => {
-    if (!blob) return;
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `epic_special_photostrip_${Date.now()}.png`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    setTimeout(() => URL.revokeObjectURL(url), 4000);
-  }, "image/png");
-}
-
-function showStripModal() {
-  const sc = buildStripCanvas();
-  if (!sc) return;
-  stripPreviewCanvas.width = sc.width;
-  stripPreviewCanvas.height = sc.height;
-  stripPreviewCanvas.getContext("2d").drawImage(sc, 0, 0);
-  stripModal.classList.remove("hidden");
-}
-
-function resetEverything() {
-  galleryEntries.length = 0;
-  galleryStrip.innerHTML = "";
-  galleryCount.textContent = `0 / ${STRIP_MAX_PHOTOS}`;
-  if (galleryEmpty) {
-    galleryEmpty.style.display = "flex";
-    galleryStrip.appendChild(galleryEmpty);
-  }
-  hideStripComplete();
-  updateStripDownloadAvailability();
-  resetPuzzleOnly();
-  gamePhase = "names";
-  currentPlayerIndex = 0;
-  turnIndicator.classList.add("hidden");
-  players.forEach((p) => {
-    p.time = null;
-    p.photo = null;
-  });
-  hideLeaderboard();
-  statusText.textContent = "enter player names to begin";
-  nameEntryModal.classList.remove("hidden");
-}
-
-function makePolaroid(snapshotCanvas, index, playerName = "Player", solveTime = 0) {
-  const BORDER = 12;
-  const BOTTOM = 44;
-  const THUMB_W = 220;
-  const scale = THUMB_W / snapshotCanvas.width;
-  const imgH = Math.round(snapshotCanvas.height * scale);
-
-  const pc = document.createElement("canvas");
-  pc.width = THUMB_W + BORDER * 2;
-  pc.height = imgH + BORDER + BOTTOM;
-  const pCtx = pc.getContext("2d");
-
-  // Polaroid white frame
-  pCtx.fillStyle = "#ffffff";
-  pCtx.fillRect(0, 0, pc.width, pc.height);
-
-  // Polaroid stroke
-  pCtx.strokeStyle = "#e8e5dc";
-  pCtx.lineWidth = 1;
-  pCtx.strokeRect(0, 0, pc.width, pc.height);
-
-  // Photo
-  pCtx.drawImage(snapshotCanvas, BORDER, BORDER, THUMB_W, imgH);
-
-  // Player Name & Solve Time Stamp
-  pCtx.fillStyle = "#1c1a16";
-  pCtx.font = "bold 11px 'Plus Jakarta Sans', sans-serif";
-  pCtx.textAlign = "left";
-  pCtx.fillText(`${playerName}`, BORDER + 2, imgH + BORDER + 18);
-
-  pCtx.fillStyle = "#f5c518";
-  pCtx.font = "bold 10px 'IBM Plex Mono', monospace";
-  pCtx.textAlign = "right";
-  pCtx.fillText(solveTime ? formatTime(solveTime) : `#${index}`, pc.width - BORDER - 2, imgH + BORDER + 18);
-
-  // Timestamp subtext
-  pCtx.fillStyle = "#8a857a";
-  pCtx.font = "9px 'IBM Plex Mono', monospace";
-  pCtx.textAlign = "left";
-  const now = new Date();
-  const ts = `${String(now.getDate()).padStart(2, "0")}.${String(now.getMonth() + 1).padStart(2, "0")}.${now.getFullYear()} PHOTO #${String(index).padStart(2, "0")}`;
-  pCtx.fillText(ts, BORDER + 2, imgH + BORDER + 32);
-
-  return pc;
-}
-
-function renderGalleryThumb(snapshotCanvas, index, playerName) {
-  const print = document.createElement("div");
-  print.className = "print";
-  const pc = makePolaroid(snapshotCanvas, index, playerName, players[currentPlayerIndex]?.time);
-  pc.style.width = "100%";
-  print.appendChild(pc);
-  galleryStrip.insertBefore(print, galleryStrip.firstChild);
-}
 
 function resetPuzzleOnly() {
   puzzle.boardBox = null;
@@ -537,38 +622,14 @@ function resetPuzzleOnly() {
   shatter.fragments = [];
   shatter.pendingCanvas = null;
   fistHoldCounter = 0;
-  lastSeenFrame.box = null;
-  lastSeenFrame.at = 0;
   lastCountdownN = -1;
-  freezeGate.holding = false;
+  smoothFaceBox.initialized = false;
+  smoothFaceBox.detected = false;
   saveSolveBtn.classList.add("hidden");
   stopRecording();
   recIndicator.classList.add("hidden");
   updateProgressBadge();
   updateGestureHUD();
-}
-
-function updateTurnIndicator() {
-  if (gamePhase === "playing") {
-    turnIndicator.classList.remove("hidden");
-    const p = players[currentPlayerIndex];
-    turnText.textContent = p?.name || `Player ${currentPlayerIndex + 1}`;
-    turnAvatar.textContent = `P${currentPlayerIndex + 1}`;
-  } else {
-    turnIndicator.classList.add("hidden");
-  }
-}
-
-function advanceToNextPlayer() {
-  currentPlayerIndex++;
-  if (currentPlayerIndex >= players.length) {
-    gamePhase = "results";
-    turnIndicator.classList.add("hidden");
-    showLeaderboard();
-    return;
-  }
-  updateTurnIndicator();
-  statusText.textContent = `${players[currentPlayerIndex].name} — frame your photo`;
 }
 
 function formatTime(seconds) {
@@ -579,62 +640,27 @@ function formatTime(seconds) {
   return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}.${ms}`;
 }
 
-function showLeaderboard() {
-  const sorted = [...players].sort((a, b) => (a.time ?? Infinity) - (b.time ?? Infinity));
-  leaderboardEntries.innerHTML = "";
-  const medals = ["gold", "silver", "bronze"];
-  sorted.forEach((p, i) => {
-    const row = document.createElement("div");
-    row.className = `leaderboard-row ${medals[i] || ""}`;
-    const rank = document.createElement("span");
-    rank.className = "leaderboard-rank";
-    rank.textContent = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `#${i + 1}`;
-    const name = document.createElement("span");
-    name.className = "leaderboard-name";
-    name.textContent = p.name;
-    const time = document.createElement("span");
-    time.className = "leaderboard-time";
-    time.textContent = p.time != null ? formatTime(p.time) : "DNF";
-    row.appendChild(rank);
-    row.appendChild(name);
-    row.appendChild(time);
-    leaderboardEntries.appendChild(row);
-  });
-  const winner = sorted[0];
-  leaderboardSubtitle.textContent = `All ${players.length} players completed the challenge!`;
-  leaderboardWinner.textContent =
-    winner && winner.time != null
-      ? `👑 ${winner.name} won 1st Place with ${formatTime(winner.time)}!`
-      : "Challenge Finished";
-  leaderboardModal.classList.remove("hidden");
-  spawnConfetti(100);
-}
-
-function hideLeaderboard() {
-  leaderboardModal.classList.add("hidden");
-}
-
 function updateGestureHUD() {
   if (appState === "tracking") {
-    gestureIcon.textContent = "✌️";
-    gestureTitle.textContent = "FRAME & PINCH";
-    gestureHint.textContent = "Extend index fingers to frame & pinch both hands to snap";
+    gestureIcon.textContent = "👤";
+    gestureTitle.textContent = "AI FACE TRACKING";
+    gestureHint.textContent = "Center face & click SNAP PHOTO when ready";
     saveSolveBtn.classList.add("hidden");
   } else if (appState === "countdown") {
     gestureIcon.textContent = "⏱️";
-    gestureTitle.textContent = "HOLD STILL";
-    gestureHint.textContent = "Capturing photo booth frame in 3 seconds…";
+    gestureTitle.textContent = "SMILE & HOLD STILL";
+    gestureHint.textContent = "Capturing photobooth portrait in 3 seconds…";
     saveSolveBtn.classList.add("hidden");
   } else if (appState === "puzzle") {
     if (puzzle.solved) {
       gestureIcon.textContent = "✊";
-      gestureTitle.textContent = "SOLVED! MAKE FIST TO SAVE";
-      gestureHint.textContent = "Hold a closed fist for 1s or click SAVE button";
+      gestureTitle.textContent = "SOLVED! MAKE FIST TO SUBMIT";
+      gestureHint.textContent = "Hold a closed fist for 1s or click SUBMIT button";
       saveSolveBtn.classList.remove("hidden");
     } else {
-      gestureIcon.textContent = "🤏";
+      gestureIcon.textContent = "🧩";
       gestureTitle.textContent = "SOLVE PUZZLE";
-      gestureHint.textContent = "Pinch or drag pieces into correct slots";
+      gestureHint.textContent = "Touch or drag pieces into matching slots";
       saveSolveBtn.classList.add("hidden");
     }
   }
@@ -642,36 +668,15 @@ function updateGestureHUD() {
 
 // ── RECAPTURE CROP HANDLER ────────────────────────────────────────────────────
 function handleRetakeCrop() {
+  if (serverTournamentState !== "ACTIVE") {
+    alert("The contest has not been started by the host yet!");
+    return;
+  }
   resetPuzzleOnly();
-  lastSeenFrame.box = null;
-  lastSeenFrame.at = 0;
   triggerFlash();
   playTone({ freq: 660, type: "square", gain: 0.14, attack: 0.001, decay: 0.08, duration: 0.1 });
-  const pName = players[currentPlayerIndex]?.name || "Player";
-  statusText.textContent = gamePhase === "playing" ? `${pName} — frame your photo again` : "frame your photo again";
+  statusText.textContent = `${myPlayer.name || "Player"} — align face & SNAP`;
   updateGestureHUD();
-}
-
-function startNewGame() {
-  players.forEach((p) => {
-    p.time = null;
-    p.photo = null;
-  });
-  currentPlayerIndex = 0;
-  gamePhase = "playing";
-  galleryEntries.length = 0;
-  galleryStrip.innerHTML = "";
-  galleryCount.textContent = `0 / ${STRIP_MAX_PHOTOS}`;
-  if (galleryEmpty) {
-    galleryEmpty.style.display = "flex";
-    galleryStrip.appendChild(galleryEmpty);
-  }
-  hideStripComplete();
-  updateStripDownloadAvailability();
-  hideLeaderboard();
-  resetPuzzleOnly();
-  updateTurnIndicator();
-  statusText.textContent = `${players[0].name} — frame your photo`;
 }
 
 function fitCanvasToWindow() {
@@ -724,15 +729,49 @@ function withTimeout(promise, ms, timeoutMessage) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
-async function initHandLandmarker() {
-  const vision = await withTimeout(
-    FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"),
-    LOAD_TIMEOUT_MS,
-    "Timed out loading MediaPipe WASM runtime. Check your internet connection."
-  );
+// ── MediaPipe Vision Models ───────────────────────────────────────────────────
+let faceDetector = null;
+let handLandmarker = null;
 
+async function initFaceDetector(vision) {
   try {
-    const handLandmarker = await withTimeout(
+    return await withTimeout(
+      FaceDetector.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath:
+            "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite",
+          delegate: "GPU",
+        },
+        runningMode: "video",
+        minDetectionConfidence: 0.5,
+        minSuppressionThreshold: 0.3,
+      }),
+      LOAD_TIMEOUT_MS,
+      "Timed out loading FaceDetector model."
+    );
+  } catch (gpuErr) {
+    console.warn("[EPIC Special Puzzle] GPU delegate failed for FaceDetector, retrying CPU…", gpuErr);
+  }
+
+  return await withTimeout(
+    FaceDetector.createFromOptions(vision, {
+      baseOptions: {
+        modelAssetPath:
+          "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite",
+        delegate: "CPU",
+      },
+      runningMode: "video",
+      minDetectionConfidence: 0.5,
+      minSuppressionThreshold: 0.3,
+    }),
+    LOAD_TIMEOUT_MS,
+    "Timed out loading FaceDetector model on CPU."
+  );
+}
+
+async function initHandLandmarker(vision) {
+  try {
+    return await withTimeout(
       HandLandmarker.createFromOptions(vision, {
         baseOptions: {
           modelAssetPath:
@@ -746,11 +785,10 @@ async function initHandLandmarker() {
         minTrackingConfidence: 0.6,
       }),
       LOAD_TIMEOUT_MS,
-      "Timed out downloading HandLandmarker model with GPU."
+      "Timed out loading HandLandmarker model."
     );
-    return handLandmarker;
   } catch (gpuErr) {
-    console.warn("[EPIC Special Puzzle] GPU delegate failed, retrying with CPU…", gpuErr);
+    console.warn("[EPIC Special Puzzle] GPU delegate failed for HandLandmarker, retrying CPU…", gpuErr);
   }
 
   return await withTimeout(
@@ -767,7 +805,7 @@ async function initHandLandmarker() {
       minTrackingConfidence: 0.6,
     }),
     LOAD_TIMEOUT_MS,
-    "Timed out downloading HandLandmarker model with CPU."
+    "Timed out loading HandLandmarker model on CPU."
   );
 }
 
@@ -796,41 +834,109 @@ function isFist(landmarks) {
   return curled >= 4;
 }
 
-function toPixel(landmarkNorm) {
-  return { x: landmarkNorm.x * canvas.width, y: landmarkNorm.y * canvas.height };
+function computeFacePortraitFrame(detection) {
+  const bb = detection.boundingBox;
+  if (!bb) return null;
+
+  const mirroredX = canvas.width - (bb.originX + bb.width);
+  const faceY = bb.originY;
+  const faceW = bb.width;
+  const faceH = bb.height;
+
+  const targetSize = Math.max(160, Math.min(canvas.height * 0.88, Math.max(faceW, faceH) * 1.55));
+  const faceCenterX = mirroredX + faceW / 2;
+  const faceCenterY = faceY + faceH / 2;
+
+  const targetCenterX = faceCenterX;
+  const targetCenterY = faceCenterY + faceH * 0.08;
+
+  let x = targetCenterX - targetSize / 2;
+  let y = targetCenterY - targetSize / 2;
+
+  x = Math.max(8, Math.min(canvas.width - targetSize - 8, x));
+  y = Math.max(8, Math.min(canvas.height - targetSize - 8, y));
+
+  return {
+    x,
+    y,
+    width: targetSize,
+    height: targetSize,
+    rawFace: { x: mirroredX, y: faceY, width: faceW, height: faceH },
+    keypoints: detection.keypoints || [],
+  };
 }
 
-function mirrorLandmarkX(landmark) {
-  return { x: 1 - landmark.x, y: landmark.y };
+function updateSmoothFaceBox(targetBox, lerpFactor = 0.22) {
+  if (!smoothFaceBox.initialized) {
+    smoothFaceBox.x = targetBox.x;
+    smoothFaceBox.y = targetBox.y;
+    smoothFaceBox.width = targetBox.width;
+    smoothFaceBox.height = targetBox.height;
+    smoothFaceBox.rawFace = targetBox.rawFace ? { ...targetBox.rawFace } : null;
+    smoothFaceBox.initialized = true;
+  } else {
+    smoothFaceBox.x += (targetBox.x - smoothFaceBox.x) * lerpFactor;
+    smoothFaceBox.y += (targetBox.y - smoothFaceBox.y) * lerpFactor;
+    smoothFaceBox.width += (targetBox.width - smoothFaceBox.width) * lerpFactor;
+    smoothFaceBox.height += (targetBox.height - smoothFaceBox.height) * lerpFactor;
+    if (targetBox.rawFace) {
+      if (!smoothFaceBox.rawFace) {
+        smoothFaceBox.rawFace = { ...targetBox.rawFace };
+      } else {
+        smoothFaceBox.rawFace.x += (targetBox.rawFace.x - smoothFaceBox.rawFace.x) * lerpFactor;
+        smoothFaceBox.rawFace.y += (targetBox.rawFace.y - smoothFaceBox.rawFace.y) * lerpFactor;
+        smoothFaceBox.rawFace.width += (targetBox.rawFace.width - smoothFaceBox.rawFace.width) * lerpFactor;
+        smoothFaceBox.rawFace.height += (targetBox.rawFace.height - smoothFaceBox.rawFace.height) * lerpFactor;
+      }
+    }
+  }
+  smoothFaceBox.keypoints = targetBox.keypoints || [];
+  smoothFaceBox.detected = true;
+  smoothFaceBox.lastSeenAt = performance.now();
 }
-
-function computeHandFrame(indexTipA, indexTipB) {
-  const a = toPixel(indexTipA);
-  const b = toPixel(indexTipB);
-  const minX = Math.min(a.x, b.x) - FRAME_PADDING;
-  const maxX = Math.max(a.x, b.x) + FRAME_PADDING;
-  const minY = Math.min(a.y, b.y) - FRAME_PADDING;
-  const maxY = Math.max(a.y, b.y) + FRAME_PADDING;
-  const x = Math.max(0, minX);
-  const y = Math.max(0, minY);
-  const width = Math.min(canvas.width, maxX) - x;
-  const height = Math.min(canvas.height, maxY) - y;
-  return { x, y, width, height };
-}
-
-const freezeGate = { holding: false, since: 0 };
-const FRAME_GRACE_MS = 450;
-const lastSeenFrame = { box: null, at: 0 };
-const countdown = { active: false, startedAt: 0 };
-let lastCountdownN = -1;
 
 function startCountdown(frameBox) {
-  puzzle.boardBox = { ...frameBox };
+  // STRICT CONTEST LOCK CHECK
+  if (serverTournamentState !== "ACTIVE") {
+    lobbyModal.classList.remove("hidden");
+    statusText.textContent = "🔒 Contest locked — waiting for admin to start";
+    return;
+  }
+
+  puzzle.boardBox = {
+    x: Math.round(frameBox.x),
+    y: Math.round(frameBox.y),
+    width: Math.round(frameBox.width),
+    height: Math.round(frameBox.height),
+  };
   appState = "countdown";
   countdown.active = true;
   countdown.startedAt = performance.now();
   lastCountdownN = -1;
   updateGestureHUD();
+}
+
+function triggerManualSnap() {
+  if (serverTournamentState !== "ACTIVE") {
+    lobbyModal.classList.remove("hidden");
+    statusText.textContent = "🔒 Contest locked — waiting for admin to start";
+    return;
+  }
+  if (appState !== "tracking") return;
+
+  let box = null;
+  if (smoothFaceBox.detected && smoothFaceBox.initialized) {
+    box = { ...smoothFaceBox };
+  } else {
+    const size = Math.min(canvas.width, canvas.height) * 0.65;
+    box = {
+      x: (canvas.width - size) / 2,
+      y: (canvas.height - size) / 2,
+      width: size,
+      height: size,
+    };
+  }
+  startCountdown(box);
 }
 
 function drawCountdownOverlay(box) {
@@ -861,7 +967,6 @@ function drawCountdownOverlay(box) {
   ctx.fillStyle = "rgba(10,12,18,0.55)";
   ctx.fillRect(box.x, box.y, box.width, box.height);
 
-  // Circular progress ring around countdown number
   const radius = Math.max(30, Math.min(box.width, box.height) * 0.22);
   const frac = (COUNTDOWN_SECONDS - remaining) / COUNTDOWN_SECONDS;
   ctx.beginPath();
@@ -874,828 +979,622 @@ function drawCountdownOverlay(box) {
   ctx.fillStyle = "#f5c518";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.shadowColor = "rgba(245,197,24,0.8)";
-  ctx.shadowBlur = 16;
   ctx.fillText(String(n), cx, cy);
   ctx.restore();
-
-  statusText.textContent = `${players[currentPlayerIndex]?.name || "Player"} — capturing in ${n}…`;
-}
-
-function gaussianNoise(std) {
-  const u1 = Math.random() || 1e-6;
-  const u2 = Math.random();
-  const z0 = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
-  return z0 * std;
-}
-
-function applyPhotoboothEffect(imageData, bw = false) {
-  const d = imageData.data;
-  for (let i = 0; i < d.length; i += 4) {
-    const noise = gaussianNoise(PHOTOBOOTH_NOISE_STD);
-    if (bw) {
-      const gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-      const v = Math.max(0, Math.min(255, gray * PHOTOBOOTH_CONTRAST_ALPHA + PHOTOBOOTH_BRIGHTNESS_BETA + noise));
-      d[i] = d[i + 1] = d[i + 2] = v;
-    } else {
-      d[i] = Math.max(0, Math.min(255, d[i] * PHOTOBOOTH_CONTRAST_ALPHA + PHOTOBOOTH_BRIGHTNESS_BETA + noise));
-      d[i + 1] = Math.max(0, Math.min(255, d[i + 1] * PHOTOBOOTH_CONTRAST_ALPHA + PHOTOBOOTH_BRIGHTNESS_BETA + noise));
-      d[i + 2] = Math.max(0, Math.min(255, d[i + 2] * PHOTOBOOTH_CONTRAST_ALPHA + PHOTOBOOTH_BRIGHTNESS_BETA + noise));
-    }
-  }
-  return imageData;
-}
-
-function shuffle(arr) {
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-  return arr;
 }
 
 function finishCountdownAndCapture(box) {
   countdown.active = false;
-
-  const mirroredFrame = document.createElement("canvas");
-  mirroredFrame.width = canvas.width;
-  mirroredFrame.height = canvas.height;
-  const mirroredCtx = mirroredFrame.getContext("2d");
-  mirroredCtx.save();
-  mirroredCtx.translate(mirroredFrame.width, 0);
-  mirroredCtx.scale(-1, 1);
-  mirroredCtx.drawImage(videoEl, 0, 0, mirroredFrame.width, mirroredFrame.height);
-  mirroredCtx.restore();
-
-  const cropCanvas = document.createElement("canvas");
-  cropCanvas.width = Math.max(1, Math.round(box.width));
-  cropCanvas.height = Math.max(1, Math.round(box.height));
-  const cropCtx = cropCanvas.getContext("2d");
-  cropCtx.drawImage(mirroredFrame, box.x, box.y, box.width, box.height, 0, 0, cropCanvas.width, cropCanvas.height);
-
   triggerFlash();
+  soundSnap();
 
-  // Color version for polaroid
-  const colorImageData = cropCtx.getImageData(0, 0, cropCanvas.width, cropCanvas.height);
-  applyPhotoboothEffect(colorImageData, false);
-  const colorCanvas = document.createElement("canvas");
-  colorCanvas.width = cropCanvas.width;
-  colorCanvas.height = cropCanvas.height;
-  colorCanvas.getContext("2d").putImageData(colorImageData, 0, 0);
-  applyVignette(colorCanvas);
+  const cropped = captureBoxToCanvas(box);
+  const styledCanvas = applyPhotoboothProcessing(cropped);
 
-  // B&W version for puzzle solving
-  const bwImageData = cropCtx.getImageData(0, 0, cropCanvas.width, cropCanvas.height);
-  applyPhotoboothEffect(bwImageData, true);
-  cropCtx.putImageData(bwImageData, 0, 0);
-  applyVignette(cropCanvas);
+  puzzle.fullPhotoboothCanvas = styledCanvas;
+  myPlayer.photoCanvas = styledCanvas;
+  downloadStripBtn.disabled = false;
 
-  puzzle.fullPhotoboothCanvas = colorCanvas;
+  initPuzzleBoard(styledCanvas, box);
+  appState = "puzzle";
+  puzzle.timerStartedAt = performance.now();
+  startRecording();
+  updateProgressBadge();
+  updateGestureHUD();
+  statusText.textContent = `${myPlayer.name || "Player"} — solve your 3x3 face puzzle!`;
+}
 
-  const tileW = Math.floor(cropCanvas.width / GRID);
-  const tileH = Math.floor(cropCanvas.height / GRID);
-  const pieces = [];
+function captureBoxToCanvas(box) {
+  const c = document.createElement("canvas");
+  c.width = box.width;
+  c.height = box.height;
+  const cCtx = c.getContext("2d");
+  cCtx.save();
+  cCtx.translate(box.width, 0);
+  cCtx.scale(-1, 1);
+  cCtx.drawImage(
+    videoEl,
+    box.x * (videoEl.videoWidth / canvas.width),
+    box.y * (videoEl.videoHeight / canvas.height),
+    box.width * (videoEl.videoWidth / canvas.width),
+    box.height * (videoEl.videoHeight / canvas.height),
+    0,
+    0,
+    box.width,
+    box.height
+  );
+  cCtx.restore();
+  return c;
+}
 
+function applyPhotoboothProcessing(sourceCanvas) {
+  const sc = document.createElement("canvas");
+  sc.width = sourceCanvas.width;
+  sc.height = sourceCanvas.height;
+  const sCtx = sc.getContext("2d");
+  sCtx.drawImage(sourceCanvas, 0, 0);
+
+  const imgData = sCtx.getImageData(0, 0, sc.width, sc.height);
+  const data = imgData.data;
+
+  for (let i = 0; i < data.length; i += 4) {
+    let r = data[i];
+    let g = data[i + 1];
+    let b = data[i + 2];
+
+    r = PHOTOBOOTH_CONTRAST_ALPHA * (r - 128) + 128 + PHOTOBOOTH_BRIGHTNESS_BETA;
+    g = PHOTOBOOTH_CONTRAST_ALPHA * (g - 128) + 128 + PHOTOBOOTH_BRIGHTNESS_BETA;
+    b = PHOTOBOOTH_CONTRAST_ALPHA * (b - 128) + 128 + PHOTOBOOTH_BRIGHTNESS_BETA;
+
+    const noise = (Math.random() - 0.5) * PHOTOBOOTH_NOISE_STD;
+    r += noise; g += noise; b += noise;
+
+    data[i] = Math.max(0, Math.min(255, r));
+    data[i + 1] = Math.max(0, Math.min(255, g));
+    data[i + 2] = Math.max(0, Math.min(255, b));
+  }
+
+  sCtx.putImageData(imgData, 0, 0);
+  applyVignette(sc);
+  return sc;
+}
+
+function initPuzzleBoard(styledCanvas, box) {
+  puzzle.boardBox = { ...box };
+  puzzle.tileW = box.width / GRID;
+  puzzle.tileH = box.height / GRID;
+  puzzle.solved = false;
+
+  const targetCoords = [];
   for (let row = 0; row < GRID; row++) {
     for (let col = 0; col < GRID; col++) {
-      const sx = col * tileW;
-      const sy = row * tileH;
-      const w = col === GRID - 1 ? cropCanvas.width - sx : tileW;
-      const h = row === GRID - 1 ? cropCanvas.height - sy : tileH;
-      const pieceCanvas = document.createElement("canvas");
-      pieceCanvas.width = w;
-      pieceCanvas.height = h;
-      pieceCanvas.getContext("2d").drawImage(cropCanvas, sx, sy, w, h, 0, 0, w, h);
-      pieces.push({
-        id: row * GRID + col,
-        row,
-        col,
-        currentGridRow: row,
-        currentGridCol: col,
-        canvas: pieceCanvas,
-        w,
-        h,
-        x: box.x + col * tileW,
-        y: box.y + row * tileH,
-        placed: false,
-        dragging: false,
-        animating: false,
+      targetCoords.push({
+        correctRow: row,
+        correctCol: col,
+        targetX: box.x + col * puzzle.tileW,
+        targetY: box.y + row * puzzle.tileH,
       });
     }
   }
 
-  // Generate a valid shuffle where pieces are NOT in their solved positions
-  let slotIndices = Array.from({ length: GRID * GRID }, (_, i) => i);
-  let attempts = 0;
+  let shuffled = [...targetCoords];
   do {
-    slotIndices = shuffle([...slotIndices]);
-    attempts++;
-  } while (
-    attempts < 30 &&
-    slotIndices.filter((slotIdx, i) => slotIdx === i).length > 2
-  );
+    shuffled.sort(() => Math.random() - 0.5);
+  } while (shuffled.every((item, idx) => item.correctRow === targetCoords[idx].correctRow && item.correctCol === targetCoords[idx].correctCol));
 
-  pieces.forEach((piece, i) => {
-    const slotIdx = slotIndices[i];
-    const targetRow = Math.floor(slotIdx / GRID);
-    const targetCol = slotIdx % GRID;
-    piece.currentGridRow = targetRow;
-    piece.currentGridCol = targetCol;
-    piece.x = box.x + targetCol * tileW;
-    piece.y = box.y + targetRow * tileH;
-    piece.placed = piece.currentGridRow === piece.row && piece.currentGridCol === piece.col;
-  });
-
-  puzzle.boardBox = box;
-  puzzle.pieces = pieces;
-  puzzle.tileW = tileW;
-  puzzle.tileH = tileH;
-  puzzle.solved = checkPuzzleSolved();
-  puzzle.timerStartedAt = performance.now();
-  puzzle.timerElapsed = 0;
-  appState = "puzzle";
-  fistHoldCounter = 0;
-
-  updateProgressBadge();
-  updateGestureHUD();
-  playTone({ freq: 220, type: "sine", gain: 0.15, attack: 0.001, decay: 0.08, duration: 0.1 });
-  startRecording();
-}
-
-// ── Strict Puzzle Validation & Swapping Mechanics ─────────────────────────────
-const drag = { activeHand: null, piece: null, offsetX: 0, offsetY: 0 };
-const pointerDrag = { active: false, piece: null, offsetX: 0, offsetY: 0 };
-
-function checkPuzzleSolved() {
-  if (!puzzle.pieces || puzzle.pieces.length !== GRID * GRID) return false;
-  // Strict rule: No piece is dragging or animating, and EVERY piece must be in its home slot
-  const anyDragging = puzzle.pieces.some((p) => p.dragging);
-  const anyAnimating = puzzle.pieces.some((p) => p.animating);
-  if (anyDragging || anyAnimating) return false;
-
-  return puzzle.pieces.every(
-    (p) => p.currentGridRow === p.row && p.currentGridCol === p.col
-  );
-}
-
-function animatePieceToSlot(piece, targetX, targetY) {
-  const startX = piece.x;
-  const startY = piece.y;
-  const startedAt = performance.now();
-  piece.animating = true;
-
-  function step() {
-    const elapsed = performance.now() - startedAt;
-    const t = Math.min(1, elapsed / SWAP_ANIM_MS);
-    const eased = 1 - Math.pow(1 - t, 3); // Smooth cubic ease-out
-    piece.x = startX + (targetX - startX) * eased;
-    piece.y = startY + (targetY - startY) * eased;
-    if (t < 1) {
-      requestAnimationFrame(step);
-    } else {
-      piece.x = targetX;
-      piece.y = targetY;
-      piece.animating = false;
-      piece.placed = piece.currentGridRow === piece.row && piece.currentGridCol === piece.col;
-      const wasSolved = puzzle.solved;
-      puzzle.solved = checkPuzzleSolved();
-      if (!wasSolved && puzzle.solved) {
-        soundComplete();
-        spawnConfetti(60);
-      }
-      updateProgressBadge();
-      updateGestureHUD();
-    }
-  }
-  requestAnimationFrame(step);
-}
-
-function dropPieceAtPosition(piece) {
-  const box = puzzle.boardBox;
-  if (!box) return;
-
-  const cx = piece.x + piece.w / 2;
-  const cy = piece.y + piece.h / 2;
-  const targetCol = Math.min(GRID - 1, Math.max(0, Math.floor((cx - box.x) / puzzle.tileW)));
-  const targetRow = Math.min(GRID - 1, Math.max(0, Math.floor((cy - box.y) / puzzle.tileH)));
-
-  const sourceRow = piece.currentGridRow;
-  const sourceCol = piece.currentGridCol;
-
-  if (targetRow === sourceRow && targetCol === sourceCol) {
-    // Snapped back to original slot
-    piece.x = box.x + sourceCol * puzzle.tileW;
-    piece.y = box.y + sourceRow * puzzle.tileH;
-    piece.placed = piece.currentGridRow === piece.row && piece.currentGridCol === piece.col;
-  } else {
-    // Find occupant in target slot to swap with
-    const otherPiece = puzzle.pieces.find(
-      (p) => p !== piece && p.currentGridRow === targetRow && p.currentGridCol === targetCol
+  puzzle.pieces = shuffled.map((item, i) => {
+    const tileCanvas = document.createElement("canvas");
+    tileCanvas.width = puzzle.tileW;
+    tileCanvas.height = puzzle.tileH;
+    const tCtx = tileCanvas.getContext("2d");
+    tCtx.drawImage(
+      styledCanvas,
+      item.correctCol * puzzle.tileW,
+      item.correctRow * puzzle.tileH,
+      puzzle.tileW,
+      puzzle.tileH,
+      0,
+      0,
+      puzzle.tileW,
+      puzzle.tileH
     );
 
-    if (otherPiece) {
-      // Clean 2-way swap
-      otherPiece.currentGridRow = sourceRow;
-      otherPiece.currentGridCol = sourceCol;
-      animatePieceToSlot(
-        otherPiece,
-        box.x + sourceCol * puzzle.tileW,
-        box.y + sourceRow * puzzle.tileH
-      );
-    }
+    const slotRow = Math.floor(i / GRID);
+    const slotCol = i % GRID;
+    const currentX = box.x + slotCol * puzzle.tileW;
+    const currentY = box.y + slotRow * puzzle.tileH;
 
-    piece.currentGridRow = targetRow;
-    piece.currentGridCol = targetCol;
-    piece.x = box.x + targetCol * puzzle.tileW;
-    piece.y = box.y + targetRow * puzzle.tileH;
-    piece.placed = piece.currentGridRow === piece.row && piece.currentGridCol === piece.col;
-  }
+    return {
+      id: i,
+      canvas: tileCanvas,
+      correctRow: item.correctRow,
+      correctCol: item.correctCol,
+      currentSlot: i,
+      x: currentX,
+      y: currentY,
+      animating: false,
+    };
+  });
 
-  // Update all placed statuses
+  checkPuzzleSolvedState();
+}
+
+function checkPuzzleSolvedState() {
+  let placedCount = 0;
   puzzle.pieces.forEach((p) => {
-    p.placed = p.currentGridRow === p.row && p.currentGridCol === p.col;
+    const slotRow = Math.floor(p.currentSlot / GRID);
+    const slotCol = p.currentSlot % GRID;
+    if (slotRow === p.correctRow && slotCol === p.correctCol) {
+      placedCount++;
+    }
   });
 
   const wasSolved = puzzle.solved;
-  puzzle.solved = checkPuzzleSolved();
+  puzzle.solved = placedCount === GRID * GRID;
 
-  if (piece.placed) soundSnap();
-  if (!wasSolved && puzzle.solved) {
+  if (puzzle.solved && !wasSolved) {
+    puzzle.timerElapsed = (performance.now() - puzzle.timerStartedAt) / 1000;
     soundComplete();
-    spawnConfetti(60);
+    spawnConfetti(80);
+    submitSolve(puzzle.timerElapsed);
   }
-  updateProgressBadge();
+
+  updateProgressBadge(placedCount);
   updateGestureHUD();
 }
 
-function findNearestPiece(px, py) {
-  let best = null;
-  let bestDist = Infinity;
-  for (const piece of puzzle.pieces) {
-    if (piece.animating) continue;
-    const cx = piece.x + piece.w / 2;
-    const cy = piece.y + piece.h / 2;
-    const d = Math.hypot(px - cx, py - cy);
-    if (d < Math.max(piece.w, piece.h) * 0.85 && d < bestDist) {
-      best = piece;
-      bestDist = d;
-    }
-  }
-  return best;
+function submitSolve(solveTime) {
+  if (serverTournamentState !== "ACTIVE") return;
+  sendWS({
+    type: "PLAYER_SOLVED",
+    solveTime,
+  });
 }
 
-function handleDragForHand(handLabel, pinching, indexPx) {
-  if (pinching) {
-    if (drag.activeHand === null) {
-      const candidate = findNearestPiece(indexPx.x, indexPx.y);
-      if (candidate) {
-        drag.activeHand = handLabel;
-        drag.piece = candidate;
-        drag.offsetX = indexPx.x - candidate.x;
-        drag.offsetY = indexPx.y - candidate.y;
-        candidate.dragging = true;
-        candidate.placed = false;
-      }
-    } else if (drag.activeHand === handLabel && drag.piece) {
-      drag.piece.x = indexPx.x - drag.offsetX;
-      drag.piece.y = indexPx.y - drag.offsetY;
+function updateProgressBadge(placedCount = 0) {
+  if (appState === "puzzle") {
+    progressBadge.classList.add("visible");
+    if (puzzle.solved) {
+      progressBadge.classList.add("solved");
+      progressText.textContent = "9 / 9 (COMPLETE)";
+    } else {
+      progressBadge.classList.remove("solved");
+      progressText.textContent = `${placedCount} / 9`;
     }
   } else {
-    if (drag.activeHand === handLabel && drag.piece) {
-      const piece = drag.piece;
-      piece.dragging = false;
-      drag.activeHand = null;
-      drag.piece = null;
-      dropPieceAtPosition(piece);
-    }
+    progressBadge.classList.remove("visible");
   }
 }
 
-// ── Mouse / Touch Pointer Fallback for Dragging Pieces ────────────────────────
-function getCanvasPoint(e) {
+// ── Dragging logic (Pointer & Touch with offset for finger placement) ─────────
+const drag = { activeHand: null, piece: null };
+const pointerDrag = { active: false, piece: null, startX: 0, startY: 0, initialPieceX: 0, initialPieceY: 0, isTouch: false };
+
+function getPieceUnderPoint(px, py) {
+  // Allow slightly larger hit area for mobile touch (12px padding)
+  const pad = 12;
+  return puzzle.pieces.find((p) => px >= p.x - pad && px <= p.x + puzzle.tileW + pad && py >= p.y - pad && py <= p.y + puzzle.tileH + pad);
+}
+
+function swapPieces(p1, p2) {
+  const tempSlot = p1.currentSlot;
+  p1.currentSlot = p2.currentSlot;
+  p2.currentSlot = tempSlot;
+
+  const slot1Row = Math.floor(p1.currentSlot / GRID);
+  const slot1Col = p1.currentSlot % GRID;
+  const slot2Row = Math.floor(p2.currentSlot / GRID);
+  const slot2Col = p2.currentSlot % GRID;
+
+  p1.x = puzzle.boardBox.x + slot1Col * puzzle.tileW;
+  p1.y = puzzle.boardBox.y + slot1Row * puzzle.tileH;
+  p2.x = puzzle.boardBox.x + slot2Col * puzzle.tileW;
+  p2.y = puzzle.boardBox.y + slot2Row * puzzle.tileH;
+
+  playTone({ freq: 784, type: "sine", gain: 0.12, decay: 0.08, duration: 0.1 });
+  checkPuzzleSolvedState();
+}
+
+function snapPieceToSlot(piece) {
+  const cx = piece.x + puzzle.tileW / 2;
+  const cy = piece.y + puzzle.tileH / 2;
+
+  let targetSlot = piece.currentSlot;
+  let minDist = Infinity;
+
+  for (let i = 0; i < GRID * GRID; i++) {
+    const r = Math.floor(i / GRID);
+    const c = i % GRID;
+    const slotCx = puzzle.boardBox.x + c * puzzle.tileW + puzzle.tileW / 2;
+    const slotCy = puzzle.boardBox.y + r * puzzle.tileH + puzzle.tileH / 2;
+    const d = Math.hypot(cx - slotCx, cy - slotCy);
+    if (d < minDist) {
+      minDist = d;
+      targetSlot = i;
+    }
+  }
+
+  const otherPiece = puzzle.pieces.find((p) => p.id !== piece.id && p.currentSlot === targetSlot);
+  if (otherPiece) {
+    swapPieces(piece, otherPiece);
+  } else {
+    piece.currentSlot = targetSlot;
+    const r = Math.floor(targetSlot / GRID);
+    const c = targetSlot % GRID;
+    piece.x = puzzle.boardBox.x + c * puzzle.tileW;
+    piece.y = puzzle.boardBox.y + r * puzzle.tileH;
+    checkPuzzleSolvedState();
+  }
+}
+
+// Mouse / Touch pointer controls with finger offset
+function getCanvasCoords(clientX, clientY) {
   const rect = canvas.getBoundingClientRect();
-  const scaleX = canvas.width / (rect.width || 1);
-  const scaleY = canvas.height / (rect.height || 1);
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
   return {
-    x: (e.clientX - rect.left) * scaleX,
-    y: (e.clientY - rect.top) * scaleY,
+    x: (clientX - rect.left) * scaleX,
+    y: (clientY - rect.top) * scaleY,
   };
 }
 
-canvas.addEventListener("pointerdown", (e) => {
-  if (appState !== "puzzle" || !puzzle.boardBox) return;
-  const pt = getCanvasPoint(e);
-  const candidate = findNearestPiece(pt.x, pt.y);
-  if (candidate) {
+function onPointerDown(e) {
+  if (appState !== "puzzle" || puzzle.solved) return;
+  const clientX = e.clientX || (e.touches && e.touches[0].clientX);
+  const clientY = e.clientY || (e.touches && e.touches[0].clientY);
+  if (!clientX || !clientY) return;
+
+  const coords = getCanvasCoords(clientX, clientY);
+  const targetPiece = getPieceUnderPoint(coords.x, coords.y);
+  if (targetPiece) {
     pointerDrag.active = true;
-    pointerDrag.piece = candidate;
-    pointerDrag.offsetX = pt.x - candidate.x;
-    pointerDrag.offsetY = pt.y - candidate.y;
-    candidate.dragging = true;
-    candidate.placed = false;
-    canvas.setPointerCapture(e.pointerId);
+    pointerDrag.piece = targetPiece;
+    pointerDrag.startX = coords.x;
+    pointerDrag.startY = coords.y;
+    pointerDrag.initialPieceX = targetPiece.x;
+    pointerDrag.initialPieceY = targetPiece.y;
+    pointerDrag.isTouch = !!e.touches;
   }
-});
-
-canvas.addEventListener("pointermove", (e) => {
-  if (!pointerDrag.active || !pointerDrag.piece) return;
-  const pt = getCanvasPoint(e);
-  pointerDrag.piece.x = pt.x - pointerDrag.offsetX;
-  pointerDrag.piece.y = pt.y - pointerDrag.offsetY;
-});
-
-function endPointerDrag(e) {
-  if (!pointerDrag.active || !pointerDrag.piece) return;
-  const piece = pointerDrag.piece;
-  piece.dragging = false;
-  pointerDrag.active = false;
-  pointerDrag.piece = null;
-  dropPieceAtPosition(piece);
-  try {
-    canvas.releasePointerCapture(e.pointerId);
-  } catch (err) {}
 }
 
-canvas.addEventListener("pointerup", endPointerDrag);
-canvas.addEventListener("pointercancel", endPointerDrag);
+function onPointerMove(e) {
+  if (!pointerDrag.active || !pointerDrag.piece) return;
+  const clientX = e.clientX || (e.touches && e.touches[0].clientX);
+  const clientY = e.clientY || (e.touches && e.touches[0].clientY);
+  if (!clientX || !clientY) return;
 
-function drawBoardAndPieces() {
-  const box = puzzle.boardBox;
-  if (!box) return;
+  const coords = getCanvasCoords(clientX, clientY);
+  // Apply a slight upward offset on mobile touch so the finger doesn't hide the tile
+  const fingerOffsetY = pointerDrag.isTouch ? -puzzle.tileH * 0.35 : 0;
 
-  // Board background
-  ctx.save();
-  ctx.fillStyle = "#0c0e14";
-  ctx.fillRect(box.x, box.y, box.width, box.height);
-  ctx.restore();
+  pointerDrag.piece.x = pointerDrag.initialPieceX + (coords.x - pointerDrag.startX);
+  pointerDrag.piece.y = pointerDrag.initialPieceY + (coords.y - pointerDrag.startY) + fingerOffsetY;
+}
 
-  // Grid guidelines
-  ctx.save();
-  ctx.strokeStyle = "rgba(245, 197, 24, 0.2)";
-  ctx.lineWidth = 1;
-  for (let i = 1; i < GRID; i++) {
-    ctx.beginPath();
-    ctx.moveTo(box.x + i * puzzle.tileW, box.y);
-    ctx.lineTo(box.x + i * puzzle.tileW, box.y + box.height);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(box.x, box.y + i * puzzle.tileH);
-    ctx.lineTo(box.x + box.width, box.y + i * puzzle.tileH);
-    ctx.stroke();
+function onPointerUp() {
+  if (pointerDrag.active && pointerDrag.piece) {
+    snapPieceToSlot(pointerDrag.piece);
+    pointerDrag.active = false;
+    pointerDrag.piece = null;
   }
-  ctx.restore();
+}
 
-  // Draw pieces (dragging pieces on top)
-  const sorted = [...puzzle.pieces].sort((a, b) => (a.dragging ? 1 : 0) - (b.dragging ? 1 : 0));
-  for (const piece of sorted) {
-    ctx.save();
-    if (piece.dragging) {
-      ctx.shadowColor = "rgba(245, 197, 24, 0.95)";
-      ctx.shadowBlur = 20;
+canvas.addEventListener("mousedown", onPointerDown);
+window.addEventListener("mousemove", onPointerMove);
+window.addEventListener("mouseup", onPointerUp);
+
+canvas.addEventListener("touchstart", (e) => {
+  if (e.touches.length === 1) {
+    onPointerDown(e);
+  }
+}, { passive: false });
+
+window.addEventListener("touchmove", (e) => {
+  if (pointerDrag.active && e.touches.length === 1) {
+    e.preventDefault();
+    onPointerMove(e);
+  }
+}, { passive: false });
+
+window.addEventListener("touchend", onPointerUp);
+
+// ── Shatter Animation ─────────────────────────────────────────────────────────
+let fistHoldCounter = 0;
+
+function startShatter(styledCanvas, box) {
+  shatter.active = true;
+  shatter.startedAt = performance.now();
+  shatter.fragments = [];
+
+  const fragW = box.width / SHATTER_COLS;
+  const fragH = box.height / SHATTER_ROWS;
+
+  for (let r = 0; r < SHATTER_ROWS; r++) {
+    for (let c = 0; c < SHATTER_COLS; c++) {
+      const fc = document.createElement("canvas");
+      fc.width = fragW;
+      fc.height = fragH;
+      const fCtx = fc.getContext("2d");
+      fCtx.drawImage(styledCanvas, c * fragW, r * fragH, fragW, fragH, 0, 0, fragW, fragH);
+
+      const angle = Math.atan2((r - SHATTER_ROWS / 2), (c - SHATTER_COLS / 2)) + (Math.random() - 0.5) * 0.5;
+      const speed = Math.random() * 12 + 6;
+
+      shatter.fragments.push({
+        canvas: fc,
+        x: box.x + c * fragW,
+        y: box.y + r * fragH,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed - 3,
+        rot: Math.random() * 360,
+        vRot: (Math.random() - 0.5) * 20,
+        w: fragW,
+        h: fragH,
+      });
     }
-    ctx.drawImage(piece.canvas, piece.x, piece.y, piece.w, piece.h);
-
-    // Green border ONLY when correctly placed in home slot
-    const isCorrect = piece.currentGridRow === piece.row && piece.currentGridCol === piece.col && !piece.dragging;
-    ctx.strokeStyle = piece.dragging
-      ? "#f5c518"
-      : isCorrect
-      ? "#10b981"
-      : "rgba(255, 255, 255, 0.35)";
-    ctx.lineWidth = piece.dragging ? 3.5 : isCorrect ? 2.5 : 1.5;
-    ctx.strokeRect(piece.x, piece.y, piece.w, piece.h);
-    ctx.restore();
   }
 
-  // Board outer frame
-  ctx.save();
-  ctx.strokeStyle = puzzle.solved ? "#10b981" : "#f5c518";
-  ctx.lineWidth = 3;
-  ctx.strokeRect(box.x, box.y, box.width, box.height);
-  ctx.restore();
-
-  // Solved victory overlay on board
-  if (puzzle.solved) {
-    ctx.save();
-    ctx.fillStyle = "rgba(16, 185, 129, 0.18)";
-    ctx.fillRect(box.x, box.y, box.width, box.height);
-    ctx.font = `bold ${Math.max(22, box.width * 0.08)}px 'Outfit', sans-serif`;
-    ctx.fillStyle = "#10b981";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.shadowColor = "rgba(16, 185, 129, 0.8)";
-    ctx.shadowBlur = 14;
-    const pname = players[currentPlayerIndex]?.name || "Player";
-    ctx.fillText(`${pname} — SOLVED!`, box.x + box.width / 2, box.y + box.height / 2 - box.height * 0.05);
-
-    ctx.font = `bold ${Math.max(13, box.width * 0.04)}px 'IBM Plex Mono', monospace`;
-    ctx.fillStyle = "#fff";
-    ctx.fillText(`Time: ${formatTime(puzzle.timerElapsed)}`, box.x + box.width / 2, box.y + box.height / 2 + box.height * 0.05);
-
-    ctx.font = `bold ${Math.max(11, box.width * 0.032)}px 'IBM Plex Mono', monospace`;
-    ctx.fillStyle = "rgba(255,255,255,0.9)";
-    ctx.fillText("HOLD FIST ✊ TO SAVE", box.x + box.width / 2, box.y + box.height / 2 + box.height * 0.12);
-    ctx.restore();
-  }
-
-  if (!puzzle.solved && puzzle.timerStartedAt) {
-    puzzle.timerElapsed = (performance.now() - puzzle.timerStartedAt) / 1000;
-  }
-  puzzleTimerText.textContent = formatTime(puzzle.timerElapsed);
+  soundShatter();
+  appState = "shattering";
 }
 
-function updateProgressBadge() {
-  if (appState !== "puzzle" || !puzzle.pieces || puzzle.pieces.length === 0) {
-    progressBadge.classList.remove("visible", "solved");
+function updateAndDrawShatter() {
+  const elapsed = performance.now() - shatter.startedAt;
+  const progress = elapsed / SHATTER_DURATION_MS;
+
+  if (progress >= 1) {
+    shatter.active = false;
+    soundSaved();
+    statusText.textContent = `${myPlayer.name} — Solve Submitted! Check leaderboard`;
     return;
   }
-  const placedCount = puzzle.pieces.filter(
-    (p) => p.currentGridRow === p.row && p.currentGridCol === p.col
-  ).length;
-  progressText.textContent = `${placedCount} / ${puzzle.pieces.length}`;
-  progressBadge.classList.add("visible");
-  progressBadge.classList.toggle("solved", puzzle.solved);
+
+  ctx.save();
+  shatter.fragments.forEach((frag) => {
+    frag.x += frag.vx;
+    frag.y += frag.vy;
+    frag.vy += 0.4;
+    frag.rot += frag.vRot;
+
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, 1 - progress);
+    ctx.translate(frag.x + frag.w / 2, frag.y + frag.h / 2);
+    ctx.rotate((frag.rot * Math.PI) / 180);
+    ctx.drawImage(frag.canvas, -frag.w / 2, -frag.h / 2);
+    ctx.restore();
+  });
+  ctx.restore();
 }
 
-function drawVideoFrame() {
+// ── Render & Detection Loop ───────────────────────────────────────────────────
+function drawLiveFaceViewfinder(box, isLive = true) {
+  ctx.save();
+  ctx.strokeStyle = isLive ? "#00e5ff" : "#606d86";
+  ctx.lineWidth = isLive ? 2.5 : 1.5;
+  ctx.strokeRect(box.x, box.y, box.width, box.height);
+
+  const bracket = Math.min(28, box.width * 0.15);
+  ctx.strokeStyle = "#f5c518";
+  ctx.lineWidth = 3.5;
+
+  ctx.beginPath(); ctx.moveTo(box.x, box.y + bracket); ctx.lineTo(box.x, box.y); ctx.lineTo(box.x + bracket, box.y); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(box.x + box.width - bracket, box.y); ctx.lineTo(box.x + box.width, box.y); ctx.lineTo(box.x + box.width, box.y + bracket); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(box.x, box.y + box.height - bracket); ctx.lineTo(box.x, box.y + box.height); ctx.lineTo(box.x + bracket, box.y + box.height); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(box.x + box.width - bracket, box.y + box.height); ctx.lineTo(box.x + box.width, box.y + box.height); ctx.lineTo(box.x + box.width, box.y + box.height - bracket); ctx.stroke();
+
+  ctx.fillStyle = "rgba(10, 12, 18, 0.75)";
+  ctx.fillRect(box.x, box.y - 28, 140, 24);
+  ctx.fillStyle = isLive ? "#00e5ff" : "#9aa5be";
+  ctx.font = "bold 10px 'IBM Plex Mono', monospace";
+  ctx.fillText(isLive ? "[ 👤 FACE DETECTED ]" : "[ SEARCHING… ]", box.x + 8, box.y - 12);
+  ctx.restore();
+}
+
+function applyColorInsideBox(box) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(box.x, box.y, box.width, box.height);
+  ctx.clip();
+
   ctx.save();
   ctx.translate(canvas.width, 0);
   ctx.scale(-1, 1);
   ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
   ctx.restore();
-}
 
-function applyColorInsideBox(box) {
-  const x = Math.max(0, Math.round(box.x));
-  const y = Math.max(0, Math.round(box.y));
-  const w = Math.min(canvas.width - x, Math.round(box.width));
-  const h = Math.min(canvas.height - y, Math.round(box.height));
-  if (w <= 0 || h <= 0) return;
-  const region = ctx.getImageData(x, y, w, h);
-  applyPhotoboothEffect(region);
-  ctx.putImageData(region, x, y);
-}
-
-function drawLiveFrameOverlay(box) {
-  ctx.save();
-  ctx.strokeStyle = "#f5c518";
-  ctx.lineWidth = 2;
-  ctx.setLineDash([8, 8]);
-  ctx.strokeRect(box.x, box.y, box.width, box.height);
-  ctx.setLineDash([]);
-
-  // Corner brackets
-  const cornerLen = 22;
-  ctx.lineWidth = 4;
-  ctx.strokeStyle = "#f5c518";
-  ctx.shadowColor = "rgba(245,197,24,0.7)";
-  ctx.shadowBlur = 10;
-  const corners = [
-    [box.x, box.y, 1, 1],
-    [box.x + box.width, box.y, -1, 1],
-    [box.x, box.y + box.height, 1, -1],
-    [box.x + box.width, box.y + box.height, -1, -1],
-  ];
-  for (const [cx, cy, dx, dy] of corners) {
-    ctx.beginPath();
-    ctx.moveTo(cx, cy + cornerLen * dy);
-    ctx.lineTo(cx, cy);
-    ctx.lineTo(cx + cornerLen * dx, cy);
-    ctx.stroke();
-  }
-
-  // Dimension tag
-  ctx.font = "bold 10px 'IBM Plex Mono', monospace";
-  ctx.fillStyle = "#f5c518";
-  ctx.textAlign = "left";
-  ctx.fillText(`${Math.round(box.width)} × ${Math.round(box.height)}px`, box.x + 4, box.y - 6);
   ctx.restore();
 }
 
-function isPointInBoard(px, py, box) {
-  if (!box) return false;
-  return px >= box.x && px <= box.x + box.width && py >= box.y && py <= box.y + box.height;
-}
+function renderPuzzleBoard() {
+  if (!puzzle.boardBox) return;
 
-function drawHandSkeleton(landmarksPx) {
   ctx.save();
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-  ctx.shadowColor = "rgba(0, 229, 255, 0.85)";
-  ctx.shadowBlur = 10;
-  ctx.strokeStyle = "rgba(0, 229, 255, 0.9)";
-  ctx.lineWidth = 2.5;
-  for (const [iA, iB] of HAND_CONNECTIONS) {
-    const a = landmarksPx[iA];
-    const b = landmarksPx[iB];
-    ctx.beginPath();
-    ctx.moveTo(a.x, a.y);
-    ctx.lineTo(b.x, b.y);
-    ctx.stroke();
+  ctx.fillStyle = "rgba(9, 12, 16, 0.85)";
+  ctx.fillRect(puzzle.boardBox.x, puzzle.boardBox.y, puzzle.boardBox.width, puzzle.boardBox.height);
+
+  ctx.strokeStyle = "rgba(245, 197, 24, 0.35)";
+  ctx.lineWidth = 1;
+
+  for (let r = 0; r <= GRID; r++) {
+    const y = puzzle.boardBox.y + r * puzzle.tileH;
+    ctx.beginPath(); ctx.moveTo(puzzle.boardBox.x, y); ctx.lineTo(puzzle.boardBox.x + puzzle.boardBox.width, y); ctx.stroke();
   }
-  ctx.shadowBlur = 6;
-  ctx.fillStyle = "#ffffff";
-  for (const p of landmarksPx) {
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, 3.2, 0, Math.PI * 2);
-    ctx.fill();
+  for (let c = 0; c <= GRID; c++) {
+    const x = puzzle.boardBox.x + c * puzzle.tileW;
+    ctx.beginPath(); ctx.moveTo(x, puzzle.boardBox.y); ctx.lineTo(x, puzzle.boardBox.y + puzzle.boardBox.height); ctx.stroke();
   }
+
+  puzzle.pieces.forEach((p) => {
+    ctx.save();
+    ctx.drawImage(p.canvas, p.x, p.y, puzzle.tileW, puzzle.tileH);
+
+    const slotRow = Math.floor(p.currentSlot / GRID);
+    const slotCol = p.currentSlot % GRID;
+    const isCorrect = slotRow === p.correctRow && slotCol === p.correctCol;
+
+    ctx.strokeStyle = isCorrect ? "#10b981" : "rgba(255, 255, 255, 0.4)";
+    ctx.lineWidth = isCorrect ? 3 : 1;
+    ctx.strokeRect(p.x, p.y, puzzle.tileW, puzzle.tileH);
+    ctx.restore();
+  });
+
+  if (puzzle.timerStartedAt && !puzzle.solved) {
+    puzzle.timerElapsed = (performance.now() - puzzle.timerStartedAt) / 1000;
+  }
+  puzzleTimerText.textContent = formatTime(puzzle.timerElapsed);
   ctx.restore();
 }
 
-function drawHandSkeletonsOverBoard(handsLandmarks, box) {
-  if (!box || !handsLandmarks || handsLandmarks.length === 0) return;
-  for (const lm of handsLandmarks) {
-    const landmarksPx = lm.map((pt) => toPixel(mirrorLandmarkX(pt)));
-    const overBoard = landmarksPx.some((p) => isPointInBoard(p.x, p.y, box));
-    if (overBoard) drawHandSkeleton(landmarksPx);
-  }
-}
+function processFrame(nowMs) {
+  ctx.save();
+  ctx.fillStyle = "#090c10";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-function startShatter(sourceCanvas, box) {
-  const cols = SHATTER_COLS;
-  const rows = SHATTER_ROWS;
-  const fragW = sourceCanvas.width / cols;
-  const fragH = sourceCanvas.height / rows;
-  const fragments = [];
-  for (let row = 0; row < rows; row++) {
-    for (let col = 0; col < cols; col++) {
-      const sx = col * fragW;
-      const sy = row * fragH;
-      const fragCanvas = document.createElement("canvas");
-      fragCanvas.width = Math.ceil(fragW);
-      fragCanvas.height = Math.ceil(fragH);
-      fragCanvas.getContext("2d").drawImage(
-        sourceCanvas,
-        sx,
-        sy,
-        fragW,
-        fragH,
-        0,
-        0,
-        fragCanvas.width,
-        fragCanvas.height
-      );
-      const cx = box.x + sx + fragW / 2;
-      const cy = box.y + sy + fragH / 2;
-      const boardCx = box.x + box.width / 2;
-      const boardCy = box.y + box.height / 2;
-      const dirX = cx - boardCx;
-      const dirY = cy - boardCy;
-      const dirLen = Math.max(1, Math.hypot(dirX, dirY));
-      const speed = 90 + Math.random() * 160;
-      fragments.push({
-        canvas: fragCanvas,
-        x: cx,
-        y: cy,
-        w: fragW,
-        h: fragH,
-        vx: (dirX / dirLen) * speed + (Math.random() - 0.5) * 40,
-        vy: (dirY / dirLen) * speed + (Math.random() - 0.5) * 40 - 60,
-        rotation: 0,
-        rotationSpeed: (Math.random() - 0.5) * 6,
-        gravity: 220 + Math.random() * 80,
+  // Background video B&W
+  ctx.save();
+  ctx.translate(canvas.width, 0);
+  ctx.scale(-1, 1);
+  ctx.filter = "grayscale(80%) brightness(50%)";
+  ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+  ctx.filter = "none";
+  ctx.restore();
+
+  let detections = [];
+  let handsLandmarks = [];
+
+  // STRICT CONTEST LOCK: Only process camera vision if contest is ACTIVE
+  if (videoEl.readyState >= 2 && serverTournamentState === "ACTIVE") {
+    if (faceDetector && (appState === "tracking" || appState === "countdown")) {
+      try {
+        const res = faceDetector.detectForVideo(videoEl, nowMs);
+        if (res?.detections) detections = res.detections;
+      } catch (e) {}
+    }
+    if (handLandmarker && (appState === "tracking" || appState === "puzzle")) {
+      try {
+        const res = handLandmarker.detectForVideo(videoEl, nowMs);
+        if (res?.landmarks) handsLandmarks = res.landmarks;
+      } catch (e) {}
+    }
+  }
+
+  // ── TRACKING PHASE ──
+  if (appState === "tracking") {
+    if (serverTournamentState === "ACTIVE") {
+      if (detections.length > 0) {
+        const primaryDetection = detections.reduce((best, cur) => {
+          const areaBest = (best.boundingBox?.width || 0) * (best.boundingBox?.height || 0);
+          const areaCur = (cur.boundingBox?.width || 0) * (cur.boundingBox?.height || 0);
+          return areaCur > areaBest ? cur : best;
+        }, detections[0]);
+
+        const portraitFrame = computeFacePortraitFrame(primaryDetection);
+        if (portraitFrame) {
+          updateSmoothFaceBox(portraitFrame);
+          drawLiveFaceViewfinder(smoothFaceBox, true);
+          statusDot.className = "status-dot live";
+          statusText.textContent = `${myPlayer.name || "Player"} — Face tracked! Tap SNAP PHOTO when ready`;
+        }
+      } else {
+        const sinceLastSeen = nowMs - smoothFaceBox.lastSeenAt;
+        if (smoothFaceBox.initialized && sinceLastSeen < 700) {
+          drawLiveFaceViewfinder(smoothFaceBox, false);
+        }
+        statusDot.className = "status-dot live";
+        statusText.textContent = `${myPlayer.name || "Player"} — look at camera to track face`;
+      }
+
+      if (handsLandmarks.length >= 1) {
+        const anyPinch = handsLandmarks.some((lm) => isPinching(lm));
+        if (anyPinch && smoothFaceBox.initialized) {
+          triggerManualSnap();
+        }
+      }
+    } else {
+      statusDot.className = "status-dot";
+      statusText.textContent = "🔒 Contest locked — waiting for host to start";
+    }
+  }
+
+  // ── COUNTDOWN PHASE ──
+  else if (appState === "countdown") {
+    if (smoothFaceBox.initialized) {
+      drawCountdownOverlay(smoothFaceBox);
+    } else if (puzzle.boardBox) {
+      drawCountdownOverlay(puzzle.boardBox);
+    }
+  }
+
+  // ── PUZZLE PHASE ──
+  else if (appState === "puzzle") {
+    applyColorInsideBox(puzzle.boardBox);
+    renderPuzzleBoard();
+
+    if (handsLandmarks.length >= 1) {
+      handsLandmarks.forEach((lm) => {
+        const indexPt = { x: (1 - lm[LM.INDEX_TIP].x) * canvas.width, y: lm[LM.INDEX_TIP].y * canvas.height };
+        const pinching = isPinching(lm);
+
+        if (pinching && !drag.piece && !puzzle.solved) {
+          const target = getPieceUnderPoint(indexPt.x, indexPt.y);
+          if (target) {
+            drag.piece = target;
+          }
+        }
+
+        if (pinching && drag.piece && !puzzle.solved) {
+          drag.piece.x = indexPt.x - puzzle.tileW / 2;
+          drag.piece.y = indexPt.y - puzzle.tileH / 2;
+
+          ctx.save();
+          ctx.beginPath();
+          ctx.arc(indexPt.x, indexPt.y, 12, 0, Math.PI * 2);
+          ctx.fillStyle = "#00e5ff";
+          ctx.fill();
+          ctx.restore();
+        } else if (!pinching && drag.piece) {
+          snapPieceToSlot(drag.piece);
+          drag.piece = null;
+        }
+
+        if (puzzle.solved && isFist(lm)) {
+          fistHoldCounter++;
+          if (fistHoldCounter >= FIST_HOLD_FRAMES && puzzle.fullPhotoboothCanvas) {
+            startShatter(puzzle.fullPhotoboothCanvas, puzzle.boardBox);
+            fistHoldCounter = 0;
+          }
+        } else {
+          fistHoldCounter = 0;
+        }
       });
     }
   }
-  shatter.fragments = fragments;
-  shatter.active = true;
-  shatter.startedAt = performance.now();
-  appState = "shattering";
-  soundShatter();
-  stopRecording();
-}
 
-function updateAndDrawShatter() {
-  const elapsedMs = performance.now() - shatter.startedAt;
-  const t = Math.min(1, elapsedMs / SHATTER_DURATION_MS);
-  if (t >= 1) {
-    finishShatter();
-    return;
-  }
-  const dt = 1 / 60;
-  const fadeStart = 0.45;
-  ctx.save();
-  for (const frag of shatter.fragments) {
-    frag.x += frag.vx * dt;
-    frag.y += frag.vy * dt;
-    frag.vy += frag.gravity * dt;
-    frag.rotation += frag.rotationSpeed * dt;
-    const alpha = t < fadeStart ? 1 : Math.max(0, 1 - (t - fadeStart) / (1 - fadeStart));
-    const scale = 1 - t * 0.25;
-    ctx.save();
-    ctx.globalAlpha = alpha;
-    ctx.translate(frag.x, frag.y);
-    ctx.rotate(frag.rotation);
-    ctx.scale(scale, scale);
-    ctx.drawImage(frag.canvas, -frag.w / 2, -frag.h / 2, frag.w, frag.h);
-    ctx.restore();
-  }
-  ctx.restore();
-}
-
-function finishShatter() {
-  shatter.active = false;
-  shatter.fragments = [];
-  players[currentPlayerIndex].time = puzzle.timerElapsed;
-  if (shatter.pendingCanvas) {
-    addToGallery(shatter.pendingCanvas);
-    statusText.textContent = "saved to photobooth strip!";
-    shatter.pendingCanvas = null;
-    soundSaved();
-  }
-  resetPuzzleOnly();
-  advanceToNextPlayer();
-}
-
-function handleFistReset() {
-  if (appState !== "puzzle") {
-    statusText.textContent = "reset board";
-    resetPuzzleOnly();
-    return;
-  }
-  const reallySolved = checkPuzzleSolved();
-  puzzle.solved = reallySolved;
-  if (reallySolved && puzzle.fullPhotoboothCanvas) {
-    shatter.pendingCanvas = puzzle.fullPhotoboothCanvas;
-    startShatter(puzzle.fullPhotoboothCanvas, puzzle.boardBox);
-  } else {
-    statusText.textContent = "puzzle not solved yet!";
-    playTone({ freq: 300, type: "sawtooth", gain: 0.1, duration: 0.15 });
-  }
-}
-
-let handLandmarker = null;
-let fistHoldCounter = 0;
-
-function processResults(result) {
-  if (appState === "shattering") {
+  // ── SHATTERING PHASE ──
+  else if (appState === "shattering") {
     updateAndDrawShatter();
-    statusText.textContent = "saving polaroid…";
-    return;
   }
 
-  const handsLandmarks = result.landmarks || [];
-  const noHands = handsLandmarks.length === 0;
-
-  if (noHands) {
-    statusDot.className = puzzle.solved ? "status-dot solved" : "status-dot";
-    fistHoldCounter = 0;
-    freezeGate.holding = false;
-    if (drag.activeHand && drag.piece) {
-      handleDragForHand(drag.activeHand, false, { x: drag.piece.x, y: drag.piece.y });
-    }
-    if (appState === "tracking") {
-      const sinceLastSeen = performance.now() - lastSeenFrame.at;
-      if (lastSeenFrame.box && sinceLastSeen < FRAME_GRACE_MS) {
-        applyColorInsideBox(lastSeenFrame.box);
-        drawLiveFrameOverlay(lastSeenFrame.box);
-      }
-      statusText.textContent =
-        gamePhase === "playing"
-          ? `${players[currentPlayerIndex]?.name || "Player"} — frame your photo`
-          : isStripFull()
-          ? "strip complete — download or reset"
-          : "looking for hands…";
-      return;
-    }
-    if (appState === "countdown") {
-      drawCountdownOverlay(puzzle.boardBox);
-      return;
-    }
-    if (appState === "puzzle") {
-      puzzle.solved = checkPuzzleSolved();
-      updateProgressBadge();
-      updateGestureHUD();
-      drawBoardAndPieces();
-      statusText.textContent = puzzle.solved
-        ? `${players[currentPlayerIndex]?.name || "Player"} — puzzle complete! make a fist or click SAVE`
-        : `${players[currentPlayerIndex]?.name || "Player"} — arrange the puzzle with pinch or mouse`;
-      return;
-    }
-    return;
-  }
-
-  statusDot.className = puzzle.solved ? "status-dot solved" : "status-dot live";
-
-  const anyFist = handsLandmarks.some((lm) => isFist(lm));
-  const draggingNow = (drag.activeHand !== null && drag.piece !== null) || pointerDrag.active;
-  if (anyFist && !draggingNow && appState !== "tracking") {
-    fistHoldCounter++;
-    if (fistHoldCounter >= FIST_HOLD_FRAMES) {
-      fistHoldCounter = 0;
-      handleFistReset();
-      return;
-    }
-  } else {
-    fistHoldCounter = 0;
-  }
-
-  if (appState === "tracking") {
-    if (isStripFull()) {
-      statusText.textContent = "strip complete — download or reset";
-      return;
-    }
-    if (handsLandmarks.length === 2) {
-      const [handA, handB] = handsLandmarks;
-      const indexA = mirrorLandmarkX(handA[LM.INDEX_TIP]);
-      const indexB = mirrorLandmarkX(handB[LM.INDEX_TIP]);
-      const frameBox = computeHandFrame(indexA, indexB);
-      if (frameBox.width > 4 && frameBox.height > 4) {
-        applyColorInsideBox(frameBox);
-        drawLiveFrameOverlay(frameBox);
-        lastSeenFrame.box = frameBox;
-        lastSeenFrame.at = performance.now();
-      }
-      const bothPinching = isPinching(handA) && isPinching(handB);
-      if (bothPinching && frameBox.width > 40 && frameBox.height > 40) {
-        if (!freezeGate.holding) {
-          freezeGate.holding = true;
-          freezeGate.since = performance.now();
-        }
-        statusDot.className = "status-dot armed";
-        statusText.textContent = "hold the pinch…";
-        if (performance.now() - freezeGate.since > FREEZE_HOLD_MS) {
-          freezeGate.holding = false;
-          startCountdown(frameBox);
-        }
-      } else {
-        freezeGate.holding = false;
-        statusText.textContent = "hands tracking";
-      }
-    } else {
-      freezeGate.holding = false;
-      const sinceLastSeen = performance.now() - lastSeenFrame.at;
-      if (lastSeenFrame.box && sinceLastSeen < FRAME_GRACE_MS) {
-        applyColorInsideBox(lastSeenFrame.box);
-        drawLiveFrameOverlay(lastSeenFrame.box);
-      }
-      statusText.textContent =
-        gamePhase === "playing"
-          ? `${players[currentPlayerIndex]?.name || "Player"} — show 2 hands`
-          : "hands tracking";
-    }
-    return;
-  }
-
-  if (appState === "countdown") {
-    drawCountdownOverlay(puzzle.boardBox);
-    return;
-  }
-
-  if (appState === "puzzle") {
-    const labelsPresent = new Set();
-    handsLandmarks.forEach((lm, i) => {
-      const label = i === 0 ? "A" : "B";
-      labelsPresent.add(label);
-      const pinching = isPinching(lm);
-      const indexPx = toPixel(mirrorLandmarkX(lm[LM.INDEX_TIP]));
-      handleDragForHand(label, pinching, indexPx);
-    });
-    if (drag.activeHand && !labelsPresent.has(drag.activeHand) && drag.piece) {
-      handleDragForHand(drag.activeHand, false, { x: drag.piece.x, y: drag.piece.y });
-    }
-    if (!drag.piece && !pointerDrag.piece) {
-      puzzle.solved = checkPuzzleSolved();
-      updateProgressBadge();
-      updateGestureHUD();
-    }
-    drawBoardAndPieces();
-    drawHandSkeletonsOverBoard(handsLandmarks, puzzle.boardBox);
-    statusText.textContent = puzzle.solved
-      ? fistHoldCounter > 0
-        ? `${players[currentPlayerIndex]?.name || "Player"} — saving… hold fist (${fistHoldCounter}/${FIST_HOLD_FRAMES})`
-        : `${players[currentPlayerIndex]?.name || "Player"} — puzzle complete! make a fist or click SAVE`
-      : `${players[currentPlayerIndex]?.name || "Player"} — arrange the puzzle with pinch or mouse`;
-  }
+  ctx.restore();
+  updateAndDrawConfetti();
 }
 
-function renderLoop() {
-  if (videoEl.readyState >= 2 && handLandmarker) {
-    drawVideoFrame();
-    const nowMs = performance.now();
-    const result = handLandmarker.detectForVideo(videoEl, nowMs);
-    processResults(result);
-  }
-  updateAndDrawConfetti();
+function renderLoop(nowMs) {
+  processFrame(nowMs);
   requestAnimationFrame(renderLoop);
 }
 
-function showError(message) {
-  errorBanner.textContent = message;
-  errorBanner.style.display = "block";
-}
-
-function showLoaderError(message) {
-  loaderText.textContent = message;
-  loaderText.style.color = "#ff4757";
+function showLoaderError(msg) {
+  loadingOverlay.classList.remove("hidden");
+  loaderText.style.color = "var(--coral)";
+  loaderText.textContent = msg;
   loaderRetry.classList.remove("hidden");
 }
 
 function resetLoaderUI() {
   loadingOverlay.classList.remove("hidden");
   loaderText.style.color = "";
-  loaderText.textContent = "Loading HandLandmarker neural model…";
+  loaderText.textContent = "Loading AI Face & Hand neural models…";
   loaderRetry.classList.add("hidden");
   errorBanner.style.display = "none";
 }
@@ -1703,29 +1602,43 @@ function resetLoaderUI() {
 async function boot() {
   resetLoaderUI();
   let settled = false;
-  const watchdogMs = LOAD_TIMEOUT_MS * 2 + 5000;
+  const watchdogMs = LOAD_TIMEOUT_MS * 2 + 8000;
   const watchdog = setTimeout(() => {
-    if (!settled) showLoaderError("Loading is taking longer than expected. Click retry or check your connection.");
+    if (!settled) showLoaderError("Loading taking longer than expected. Click retry.");
   }, watchdogMs);
 
   try {
     if (!videoEl.srcObject) await initWebcam();
-    handLandmarker = await initHandLandmarker();
+    loaderText.textContent = "Loading MediaPipe WASM runtime…";
+    const vision = await withTimeout(
+      FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"),
+      LOAD_TIMEOUT_MS,
+      "Timed out loading MediaPipe WASM."
+    );
+
+    loaderText.textContent = "Loading AI Face Detection neural model…";
+    faceDetector = await initFaceDetector(vision);
+
+    loaderText.textContent = "Loading Hand Tracking neural model…";
+    handLandmarker = await initHandLandmarker(vision);
+
     settled = true;
     clearTimeout(watchdog);
     loadingOverlay.classList.add("hidden");
-    statusText.textContent = "enter player names to begin";
+    statusText.textContent = "enter player name to join";
+
+    connectWebSocket();
     requestAnimationFrame(renderLoop);
     nameEntryModal.classList.remove("hidden");
   } catch (err) {
     settled = true;
     clearTimeout(watchdog);
     if (err && err.name === "NotAllowedError") {
-      showLoaderError("Camera permission denied. Enable camera access in your browser and click retry.");
+      showLoaderError("Camera permission denied. Enable camera access and click retry.");
     } else if (err && err.name === "NotFoundError") {
-      showLoaderError("No webcam was found on your device.");
+      showLoaderError("No camera found on your device.");
     } else {
-      showLoaderError((err && err.message) || "Error starting the application.");
+      showLoaderError((err && err.message) || "Error starting application.");
     }
   }
 }
@@ -1733,81 +1646,89 @@ async function boot() {
 // ── Event Listeners ───────────────────────────────────────────────────────────
 loaderRetry.addEventListener("click", () => boot());
 
+if (snapBtn) snapBtn.addEventListener("click", triggerManualSnap);
+if (mobileSnapBtn) mobileSnapBtn.addEventListener("click", triggerManualSnap);
+
 if (downloadStripBtn) {
-  updateStripDownloadAvailability();
-  downloadStripBtn.addEventListener("click", showStripModal);
+  downloadStripBtn.addEventListener("click", () => {
+    if (!myPlayer.photoCanvas) return;
+    myPlayer.photoCanvas.toBlob((blob) => {
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `epic_tournament_face_${Date.now()}.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+    });
+  });
 }
 
 if (downloadVideoBtn) {
   downloadVideoBtn.addEventListener("click", downloadVideo);
 }
 
-if (stripModalDownload) {
-  stripModalDownload.addEventListener("click", () => downloadPhotoStrip());
-}
-
-if (stripModalClose) {
-  stripModalClose.addEventListener("click", () => stripModal.classList.add("hidden"));
-}
-if (stripModalCloseIcon) {
-  stripModalCloseIcon.addEventListener("click", () => stripModal.classList.add("hidden"));
-}
-
-if (resetAllBtn) {
-  resetAllBtn.addEventListener("click", () => {
-    const confirmed = window.confirm("Are you sure you want to reset all players and delete the photo strip?");
-    if (confirmed) resetEverything();
-  });
-}
-
 if (startGameBtn) {
   startGameBtn.addEventListener("click", () => {
-    const inputs = [
-      document.getElementById("playerName1"),
-      document.getElementById("playerName2"),
-      document.getElementById("playerName3"),
-    ];
-    inputs.forEach((input, i) => {
-      const val = input.value.trim();
-      players[i].name = val || `Player ${i + 1}`;
-    });
+    const val = playerNameInput.value.trim();
+    if (!val) {
+      alert("Please enter your name to join the tournament!");
+      playerNameInput.focus();
+      return;
+    }
+    myPlayer.name = val;
     nameEntryModal.classList.add("hidden");
-    gamePhase = "playing";
-    currentPlayerIndex = 0;
-    updateTurnIndicator();
-    statusText.textContent = `${players[0].name} — frame your photo`;
-    updateGestureHUD();
+    sendWS({ type: "PLAYER_JOIN", name: myPlayer.name });
     playTone({ freq: 523, type: "sine", gain: 0.15, duration: 0.2 });
   });
 }
 
-if (playAgainBtn) {
-  playAgainBtn.addEventListener("click", startNewGame);
-}
-
-if (viewStripBtn) {
-  viewStripBtn.addEventListener("click", () => {
-    leaderboardModal.classList.add("hidden");
-    showStripModal();
+if (playerNameInput) {
+  playerNameInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") startGameBtn.click();
   });
 }
 
-// Retake Crop Click Listener
+// Mobile Leaderboard Drawer Handlers
+if (mobileLbToggleBtn) {
+  mobileLbToggleBtn.addEventListener("click", () => {
+    sidebarDrawer.classList.toggle("open");
+  });
+}
+if (closeDrawerBtn) {
+  closeDrawerBtn.addEventListener("click", () => {
+    sidebarDrawer.classList.remove("open");
+  });
+}
+
+if (solveResultViewLB) {
+  solveResultViewLB.addEventListener("click", () => {
+    solveResultModal.classList.add("hidden");
+    sidebarDrawer.classList.add("open");
+  });
+}
+if (solveResultClose) {
+  solveResultClose.addEventListener("click", () => solveResultModal.classList.add("hidden"));
+}
+
+if (endedCloseBtn) {
+  endedCloseBtn.addEventListener("click", () => endedModal.classList.add("hidden"));
+}
+
 if (retakeBtn) {
   retakeBtn.addEventListener("click", handleRetakeCrop);
 }
 
-// Save & Continue Button Click (fallback for fist gesture)
 if (saveSolveBtn) {
   saveSolveBtn.addEventListener("click", () => {
     if (puzzle.solved && puzzle.fullPhotoboothCanvas) {
-      shatter.pendingCanvas = puzzle.fullPhotoboothCanvas;
       startShatter(puzzle.fullPhotoboothCanvas, puzzle.boardBox);
     }
   });
 }
 
-// Sound Mute Toggle
 if (soundToggleBtn) {
   soundToggleBtn.addEventListener("click", () => {
     soundMuted = !soundMuted;
@@ -1819,18 +1740,6 @@ if (soundToggleBtn) {
   });
 }
 
-// Fullscreen Toggle
-if (fullscreenBtn) {
-  fullscreenBtn.addEventListener("click", () => {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen().catch(() => {});
-    } else {
-      document.exitFullscreen().catch(() => {});
-    }
-  });
-}
-
-// How to play guide modal
 if (helpBtn) {
   helpBtn.addEventListener("click", () => helpModal.classList.remove("hidden"));
 }
@@ -1841,19 +1750,24 @@ if (helpModalCloseIcon) {
   helpModalCloseIcon.addEventListener("click", () => helpModal.classList.add("hidden"));
 }
 
-// Keyboard shortcuts (R for Retake, Space for Retake / Solve, Esc to close modals)
 window.addEventListener("keydown", (e) => {
-  if (e.key === "r" || e.key === "R") {
-    if (gamePhase === "playing") {
+  if (e.key === " " || e.key === "s" || e.key === "S") {
+    if (appState === "tracking" && nameEntryModal.classList.contains("hidden") && lobbyModal.classList.contains("hidden")) {
+      e.preventDefault();
+      triggerManualSnap();
+    }
+  } else if (e.key === "r" || e.key === "R") {
+    if (nameEntryModal.classList.contains("hidden") && lobbyModal.classList.contains("hidden")) {
       handleRetakeCrop();
     }
   } else if (e.key === "Escape") {
-    stripModal.classList.add("hidden");
+    sidebarDrawer.classList.remove("open");
+    solveResultModal.classList.add("hidden");
+    endedModal.classList.add("hidden");
     helpModal.classList.add("hidden");
   }
 });
 
-// Resume Web Audio on user gesture
 window.addEventListener("click", () => resumeAudio(), { once: true });
 window.addEventListener("touchstart", () => resumeAudio(), { once: true });
 

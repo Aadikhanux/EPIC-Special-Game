@@ -420,7 +420,7 @@ footer a {
 <section class="hero">
   <div class="hero-label">Free Guide by Unnati Tripathi</div>
   <h1>EPIC Special Puzzle</h1>
-  <p>A hand-gesture controlled photobooth puzzle game that runs entirely in your browser. No installation, no backend, no frameworks. Just your hands and a webcam.</p>
+  <p>An AI Face-Detection & hand-gesture photobooth puzzle game that runs entirely in your browser. No installation, no backend, no frameworks. Just your camera, face tracking, and hands.</p>
   <div class="by-line">
     <span>by</span>
     <a class="tag" href="https://www.instagram.com/aiwithunnati" target="_blank">Instagram @aiwithunnati</a>
@@ -432,10 +432,10 @@ footer a {
 
 <div class="section">
   <div class="section-label">What is this?</div>
-  <h2>Your hands are the camera</h2>
-  <p>You use your index fingers to frame the photo, pinch to capture, then solve a 3×3 puzzle with your fingers. When you complete it, it shatters into a polaroid that gets saved to your strip. Built with zero dependencies — just vanilla JavaScript and browser APIs.</p>
+  <h2>AI Face Detection Photobooth</h2>
+  <p>The AI model automatically tracks your face and frames a portrait photobooth crop. Hold still for 1 second (or press SNAP / Space) to capture, then solve a 3×3 puzzle of your portrait using your hands or mouse. When completed, hold a fist or click save to shatter into your vintage polaroid strip!</p>
   <div class="callout">
-    <p>The puzzles are black and white while you solve them, then reveal as full colour when saved. Camera flash included. Each photo gets a polaroid border with the date and number stamped on it.</p>
+    <p>The puzzles are black and white while you solve them, then reveal as full colour when saved. Camera flash included. Each photo gets a polaroid border with player name, solve time, and stamp.</p>
   </div>
 </div>
 
@@ -481,7 +481,7 @@ footer a {
       <div class="step-number">04</div>
       <div class="step-content">
         <h3>Allow camera access</h3>
-        <p>Chrome will ask for camera permission. Click Allow. The hand tracking model (~10MB) downloads on first load — needs internet once. After that it works offline.</p>
+        <p>Chrome will ask for camera permission. Click Allow. The AI Face Detection and Hand Tracking models download on first load.</p>
         <div class="code-block"><span class="comment">// Recommended browsers</span><br>Chrome or Edge → best experience<br>Firefox → works<br>Safari → limited</div>
       </div>
     </div>
@@ -493,36 +493,36 @@ footer a {
 
 <section class="gestures-section" id="gestures">
   <div class="section-label">Controls</div>
-  <h2>Gesture guide</h2>
-  <p>No mouse, no keyboard. Your hands do everything.</p>
+  <h2>How to play</h2>
+  <p>AI Face Tracking + Hand Gestures + Mouse fallback.</p>
 
   <table class="gesture-table">
     <thead>
       <tr>
-        <th>Gesture</th>
+        <th>Action / Gesture</th>
         <th>What it does</th>
       </tr>
     </thead>
     <tbody>
       <tr>
-        <td>Raise both hands</td>
-        <td>Camera starts tracking — the space between your index fingertips becomes the photo frame</td>
+        <td>Center face in camera</td>
+        <td>AI Face Detector automatically locks onto your face and frames a portrait photo crop with smart headroom</td>
       </tr>
       <tr>
-        <td>Pinch both hands together</td>
-        <td>Locks the frame and starts the 3 second countdown</td>
+        <td>Hold steady for 1s / Space / SNAP button</td>
+        <td>Locks the portrait frame and starts the 3-second countdown & flash</td>
       </tr>
       <tr>
-        <td>One hand pinch over a piece</td>
+        <td>Pinch hand over a piece (or mouse drag)</td>
         <td>Picks up and drags that puzzle piece</td>
       </tr>
       <tr>
-        <td>Release the pinch near correct spot</td>
-        <td>Piece snaps into place automatically</td>
+        <td>Release pinch / drop piece</td>
+        <td>Piece swaps cleanly into the slot and glows green when correctly matched</td>
       </tr>
       <tr>
-        <td>Closed fist (hold)</td>
-        <td>Saves the completed puzzle / resets the board</td>
+        <td>Closed fist ✊ / SAVE button</td>
+        <td>Shatters completed puzzle into your color polaroid strip and advances to next player</td>
       </tr>
     </tbody>
   </table>

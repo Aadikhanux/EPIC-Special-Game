@@ -1,0 +1,14 @@
+{
+  "name": "epic-special-game",
+  "version": "2.0.0",
+  "description": "EPIC Special Photobooth Puzzle — 500-Player Live Tournament",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "ws": "^8.18.0"
+  }
+}
