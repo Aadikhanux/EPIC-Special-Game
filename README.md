@@ -1,98 +1,86 @@
-# EPIC Special Puzzle
-**© 2026 aiwithunnati — all rights reserved**
+# EPIC Special Photobooth Puzzle — Live Tournament 🏆
 
-A hand-gesture controlled photobooth puzzle game that runs entirely in your browser. No installation, no backend, no frameworks. Just your hands and a webcam.
-
----
-
-## what is this?
-
-You use your hands as a camera frame, pinch to take a photo, solve a puzzle with your fingers, and watch it shatter into a polaroid strip. The whole thing runs in one browser tab with zero setup.
-
-Built with vanilla JavaScript, MediaPipe hand tracking, and the Web Audio API. No React. No npm. Nothing to install.
+A real-time, 500+ player multiplayer AI face detection photobooth puzzle tournament engine. Built with MediaPipe Neural Vision, WebSockets, HTML5 Canvas 2D physics, and Web Audio API.
 
 ---
 
-## how to run it
+## 🌟 Key Features
 
-**1. clone the repo**
+- **🎮 Live Multiplayer Tournament Engine:** Supports 500+ concurrent players with live ranking updates, sub-second sync, and real-time scoreboards via WebSockets.
+- **👤 AI Face Tracking & Viewfinder:** MediaPipe BlazeFace auto-detects and smoothly locks onto your face portrait with an interactive cyber viewfinder.
+- **👌 Air-Gesture Pinch Controls:** Solve the 3×3 puzzle entirely with touchless camera air gestures. Features adaptive palm-scale distance normalization, hysteresis enter/exit thresholds, and exponential landmark smoothing.
+- **📱 Fully Mobile-Optimized:**
+  - **Full-Screen Camera:** The game viewport occupies 100% of the screen on mobile devices.
+  - **Slide-up Leaderboard Drawer:** Open rankings via the top HUD trophy button with a backdrop tap-to-dismiss.
+  - Pure vision-based gesture solving without screen touch interference.
+- **🔒 Privacy & Battery Conscious:** Camera hardware tracks and vision neural models immediately stop running once a player completes their puzzle or when the tournament ends.
+- **🎛️ Admin Mission Control (`/admin`):**
+  - Live tournament state machine (`LOBBY` → `ACTIVE` → `ENDED`).
+  - Real-time player telemetry, connected counts, average/fastest solve times.
+  - Broadcast live announcements to all players in real time.
+  - Tournament countdown timer configuration.
+  - One-click CSV export of tournament results.
+  - Player management and kick controls.
+- **🔊 Procedural Sound Design:** Full audio synthesizer powered by Web Audio API — countdown beeps, snap clicks, piece locking, completion chimes, and celebration bursts with zero audio file downloads.
+
+---
+
+## Quick Start
+
+### 1. Prerequisites
+- [Node.js](https://nodejs.org/) (v16 or newer recommended)
+
+### 2. Install & Run
 ```bash
-git clone https://github.com/Unnati-23/puzzlecam.git
-cd puzzlecam
+# Clone the repository
+git clone https://github.com/Aadikhanux/EPIC-Special-Game.git
+cd EPIC-Special-Game
+
+# Install dependencies
+npm install
+
+# Start the tournament server
+npm start
+# or: node server.js
 ```
 
-**2. open in VS Code and click Go Live**
+### 3. Access URLs
+- **Player Interface:** `http://localhost:8080`
+- **Admin Mission Control:** `http://localhost:8080/admin`
+---
 
-Install the [Live Server](https://marketplace.visualstudio.com/items?itemName=ritwickdey.LiveServer) extension by Ritwick Dey if you don't have it. Then click **Go Live** in the bottom right corner.
+## 🎮 How to Play
 
-**3. open in Chrome or Edge**
-```
-http://localhost:5500
-```
-Allow camera access when the browser asks.
-
-> needs internet on first load to download the MediaPipe hand model (~10MB). after that it works offline.
+| Step | Action | Description |
+|---|---|---|
+| **1** | **Join Lobby** | Enter your name and wait in the lobby until the host begins the contest. |
+| **2** | **Frame Face & Snap** | Center your face in the AI viewfinder and tap **SNAP PHOTO** (or pinch in air). A 3-second countdown will capture and photobooth-process your photo. |
+| **3** | **Solve 3×3 Puzzle** | Pinch your thumb and index finger in front of the camera (`👌`) to grab, drag, and drop tiles into the correct slots. |
+| **4** | **Submit & Lock Rank** | Once all 9 tiles are solved, your time is automatically submitted to the live tournament leaderboard and your camera turns off. |
 
 ---
 
-## how to play
+## 🛠️ Architecture & Tech Stack
 
-| gesture | what it does |
-|---|---|
-| raise both hands | camera starts tracking your hands |
-| pinch both hands together | defines the photo frame and starts 3 second countdown |
-| one hand pinch on a piece | drag that puzzle piece |
-| drop piece near correct spot | it snaps in automatically |
-| closed fist (hold) | saves completed puzzle / resets board |
-
-**the full flow:**
-1. hold both hands up — the space between your index fingers becomes your camera frame
-2. pinch both hands → 3 second countdown → flash → photo captured in B&W
-3. solve the 3x3 puzzle by dragging pieces with a pinch gesture
-4. make a fist when done → pieces shatter → saved as a color polaroid with your date and photo number
-5. complete 3 puzzles → your full photo strip pops up → download it
+- **Frontend:** Vanilla JavaScript (ES Modules), HTML5, Custom CSS3 Design System.
+- **Vision Models:** MediaPipe Tasks Vision (`@mediapipe/tasks-vision` 0.10.14) — BlazeFace & HandLandmarker.
+- **Backend:** Node.js, Express, `ws` (High-performance WebSocket Server).
+- **Audio:** Web Audio API procedural synthesis (Sine, Sawtooth, Square oscillators & gain envelopes).
+- **FX:** Canvas 2D particle physics (confetti explosions & shattering puzzle fragments).
 
 ---
 
-## what makes it different
+## 🌐 Browser Support
 
-- puzzles are **B&W while solving**, then reveal as **full color** when saved
-- **camera flash** at the moment of capture
-- **polaroid borders** with date and number stamped on each photo
-- **sound design** — countdown beeps, piece snap, shatter burst, completion chime
-- **video recording** of each solve, downloadable as WebM
-- **photo strip popup** inside the game when all 3 are done
-- zero frameworks, zero dependencies, everything runs in the browser
-
----
-
-## tech used
-
-- MediaPipe Tasks Vision `v0.10.14` — hand landmark detection
-- Canvas 2D API — rendering, effects, puzzle, shatter physics
-- Web Audio API — all sounds generated in code, no audio files
-- MediaRecorder API — video capture
-- Vanilla JavaScript (ES Modules) — no frameworks, no build step
+| Browser / Device | Status | Notes |
+|---|---|---|
+| **Chrome / Edge (Desktop & Mobile)** | 🟢 Recommended | Hardware-accelerated WebAssembly & WebGL. |
+| **Firefox** | 🟢 Fully Supported | Full camera & gesture support. |
+| **Safari / iOS** | 🟢 Fully Supported | WebRTC & full mobile responsive drawer. |
+| **Android Chrome** | 🟢 Fully Supported | High performance live vision tracking. |
 
 ---
 
-## browser support
+## 📄 License
 
-| browser | support |
-|---|---|
-| Chrome / Edge | recommended |
-| Firefox | works |
-| Safari | limited |
-| mobile | not recommended |
-
----
-
-## tag me!
-
-if you try this i would genuinely love to see your photobooth strip. tag me **@aiwithunnati** — have fun with it!
-
----
-
-## license
-
-MIT — free to use, modify, and share.
+MIT License — Free to use, customize, and deploy.
