@@ -51,7 +51,7 @@
 
       <!-- Quick Action Controls -->
       <div class="hud-actions">
-        <button type="button" id="mobileLbToggleBtn" class="hud-btn hud-btn--icon mobile-only" title="Live Leaderboard">
+        <button type="button" id="mobileLbToggleBtn" class="hud-btn hud-btn--icon mobile-only" title="Open Live Leaderboard" aria-label="Open Live Leaderboard">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <line x1="18" y1="20" x2="18" y2="10"></line>
             <line x1="12" y1="20" x2="12" y2="4"></line>
@@ -137,7 +137,7 @@
       </div>
       <div class="gallery-head-right">
         <span class="gallery-count-badge" id="galleryCount">0 solved</span>
-        <button id="closeDrawerBtn" class="modal-close-btn mobile-only">&times;</button>
+        <button id="closeDrawerBtn" class="modal-close-btn mobile-only" title="Close Leaderboard" aria-label="Close Leaderboard">&times;</button>
       </div>
     </div>
 
@@ -166,6 +166,9 @@
       </div>
     </div>
   </aside>
+
+  <!-- Mobile Drawer Backdrop Overlay -->
+  <div id="drawerBackdrop" class="drawer-backdrop mobile-only"></div>
 
 </div>
 
@@ -223,7 +226,7 @@
       <div class="radar-ring r3"></div>
       <div class="radar-dot"></div>
     </div>
-    <div class="modal-badge lock-badge">🚀 CONTEST ABOUT TO START</div>
+    <div class="modal-badge lock-badge">CONTEST ABOUT TO START</div>
     <h2 class="modal-title" id="lobbyTitle">GET READY!</h2>
     <p class="modal-subtitle" id="lobbySubtitle">The host is preparing the competition. The game will automatically launch on your screen when the host starts!</p>
 

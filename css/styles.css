@@ -568,8 +568,22 @@ canvas#fxCanvas {
 .hud-snap-main-btn.hidden {
   display: none !important;
 }
-  z-index: 10;
+
+/* Mobile Drawer Backdrop */
+.drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(6px);
+  z-index: 110;
+  opacity: 0;
   pointer-events: none;
+  transition: opacity 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.drawer-backdrop.open {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .rec-indicator.hidden { display: none; }
@@ -830,6 +844,22 @@ canvas#fxCanvas {
     display: flex !important;
   }
 
+  #app {
+    flex-direction: column;
+    width: 100vw;
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  #stage {
+    width: 100vw !important;
+    height: 100vh !important;
+    height: 100dvh !important;
+    flex: 1 1 100% !important;
+    position: relative;
+  }
+
   .hud-top {
     padding: 10px 12px;
   }
@@ -855,6 +885,18 @@ canvas#fxCanvas {
     justify-content: center;
   }
 
+  /* Live Leaderboard mobile toggle button */
+  #mobileLbToggleBtn {
+    color: var(--gold);
+    border-color: rgba(245, 197, 24, 0.4);
+    background: rgba(245, 197, 24, 0.12);
+  }
+
+  #mobileLbToggleBtn:hover, #mobileLbToggleBtn:active {
+    background: rgba(245, 197, 24, 0.25);
+    border-color: var(--gold);
+  }
+
   .mobile-snap-btn {
     display: flex !important;
   }
@@ -875,7 +917,7 @@ canvas#fxCanvas {
     font-size: 9px;
   }
 
-  /* Convert sidebar into slide-up mobile drawer */
+  /* Convert sidebar into slide-up mobile drawer - hidden offscreen by default */
   #gallery.sidebar-drawer {
     position: fixed;
     bottom: 0;
@@ -884,13 +926,16 @@ canvas#fxCanvas {
     width: 100vw;
     height: 75vh;
     height: 75dvh;
+    max-height: 80vh;
+    max-height: 80dvh;
     border-left: none;
     border-top: 1px solid var(--border-glass);
     border-top-left-radius: var(--radius-lg);
     border-top-right-radius: var(--radius-lg);
-    transform: translateY(100%);
-    box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.8);
+    transform: translateY(105%);
+    box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.85);
     z-index: 120;
+    transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   #gallery.sidebar-drawer.open {

@@ -69,6 +69,7 @@ const helpBtn = document.getElementById("helpBtn");
 const mobileLbToggleBtn = document.getElementById("mobileLbToggleBtn");
 const closeDrawerBtn = document.getElementById("closeDrawerBtn");
 const sidebarDrawer = document.getElementById("gallery");
+const drawerBackdrop = document.getElementById("drawerBackdrop");
 
 const nameEntryModal = document.getElementById("nameEntryModal");
 const playerNameInput = document.getElementById("playerNameInput");
@@ -446,7 +447,7 @@ function handleServerMessage(msg) {
           lobbyModal.classList.remove("hidden");
         }
         statusDot.className = "status-dot";
-        statusText.textContent = "🚀 Contest about to start — waiting for admin";
+        statusText.textContent = "Contest about to start — waiting for admin";
       } else {
         lobbyModal.classList.add("hidden");
         statusDot.className = "status-dot live";
@@ -499,6 +500,7 @@ function handleServerMessage(msg) {
 
     case "TOURNAMENT_END":
       serverTournamentState = "ENDED";
+      stopCameraAndVision();
       if (appState === "countdown") {
         countdown.active = false;
         appState = "tracking";
@@ -569,6 +571,7 @@ function handleServerMessage(msg) {
       break;
 
     case "SOLVE_CONFIRMED":
+      stopCameraAndVision();
       myPlayer.solveTime = msg.solveTime;
       myPlayer.rank = msg.rank;
       rankBadge.classList.remove("hidden");
@@ -848,6 +851,30 @@ async function initWebcam() {
   canvas.width = videoEl.videoWidth || 1280;
   canvas.height = videoEl.videoHeight || 720;
   fitCanvasToWindow();
+}
+
+function stopCameraAndVision() {
+  console.log("[Camera/Vision] Stopping camera and AI vision models after game finished.");
+  if (videoEl && videoEl.srcObject) {
+    try {
+      const stream = videoEl.srcObject;
+      if (stream && stream.getTracks) {
+        stream.getTracks().forEach((track) => {
+          track.stop();
+          console.log("[Camera] Stopped camera track:", track.label);
+        });
+      }
+    } catch (e) {
+      console.warn("[Camera] Error stopping camera tracks:", e);
+    }
+    videoEl.srcObject = null;
+  }
+  try {
+    videoEl.pause();
+  } catch (e) {}
+
+  cameraAndModelsReady = false;
+  initializingModels = false;
 }
 
 function withTimeout(promise, ms, timeoutMessage) {
@@ -1264,6 +1291,7 @@ function checkPuzzleSolvedState() {
     soundComplete();
     spawnConfetti(80);
     submitSolve(puzzle.timerElapsed);
+    stopCameraAndVision();
   }
 
   updateProgressBadge(placedCount);
@@ -1356,6 +1384,7 @@ function snapPieceToSlot(piece) {
 let fistHoldCounter = 0;
 
 function startShatter(styledCanvas, box) {
+  stopCameraAndVision();
   shatter.active = true;
   shatter.startedAt = performance.now();
   shatter.fragments = [];
@@ -1447,16 +1476,21 @@ function drawLiveFaceViewfinder(box, isLive = true) {
 }
 
 function applyColorInsideBox(box) {
+  if (!box) return;
   ctx.save();
   ctx.beginPath();
   ctx.rect(box.x, box.y, box.width, box.height);
   ctx.clip();
 
-  ctx.save();
-  ctx.translate(canvas.width, 0);
-  ctx.scale(-1, 1);
-  ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
-  ctx.restore();
+  if (videoEl.srcObject && videoEl.readyState >= 2) {
+    ctx.save();
+    ctx.translate(canvas.width, 0);
+    ctx.scale(-1, 1);
+    ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+    ctx.restore();
+  } else if (puzzle.fullPhotoboothCanvas) {
+    ctx.drawImage(puzzle.fullPhotoboothCanvas, box.x, box.y, box.width, box.height);
+  }
 
   ctx.restore();
 }
@@ -1512,8 +1546,8 @@ function processFrame(nowMs) {
     return;
   }
 
-  // Draw video feed
-  if (videoEl.readyState >= 2) {
+  // Draw video feed only when active
+  if (videoEl.srcObject && videoEl.readyState >= 2) {
     ctx.save();
     ctx.translate(canvas.width, 0);
     ctx.scale(-1, 1);
@@ -1524,7 +1558,9 @@ function processFrame(nowMs) {
   let detections = [];
   let handsLandmarks = [];
 
-  if (videoEl.readyState >= 2) {
+  // Run neural vision models only during active gameplay before solving
+  const isActivelyPlaying = !puzzle.solved && appState !== "shattering";
+  if (isActivelyPlaying && videoEl.srcObject && videoEl.readyState >= 2) {
     if (faceDetector && (appState === "tracking" || appState === "countdown")) {
       try {
         const res = faceDetector.detectForVideo(videoEl, nowMs);
@@ -1688,13 +1724,15 @@ async function ensureCameraAndModelsReady() {
 
   try {
     if (!videoEl.srcObject) await initWebcam();
-    const vision = await withTimeout(
-      FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"),
-      LOAD_TIMEOUT_MS,
-      "Timed out loading MediaPipe WASM."
-    );
-    faceDetector = await initFaceDetector(vision);
-    handLandmarker = await initHandLandmarker(vision);
+    if (!faceDetector || !handLandmarker) {
+      const vision = await withTimeout(
+        FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"),
+        LOAD_TIMEOUT_MS,
+        "Timed out loading MediaPipe WASM."
+      );
+      if (!faceDetector) faceDetector = await initFaceDetector(vision);
+      if (!handLandmarker) handLandmarker = await initHandLandmarker(vision);
+    }
 
     cameraAndModelsReady = true;
     initializingModels = false;
@@ -1733,7 +1771,7 @@ if (startGameBtn) {
     if (serverTournamentState !== "ACTIVE") {
       lobbyModal.classList.remove("hidden");
       statusDot.className = "status-dot";
-      statusText.textContent = "🚀 Contest about to start — waiting for admin";
+      statusText.textContent = "Contest about to start — waiting for admin";
     } else {
       lobbyModal.classList.add("hidden");
       statusDot.className = "status-dot live";
@@ -1751,22 +1789,81 @@ if (playerNameInput) {
   });
 }
 
-// Mobile Leaderboard Drawer Handlers
+// ── Mobile & Desktop Touch/Pointer Drag for Puzzle Pieces ─────────────────────
+let pointerActivePiece = null;
+let pointerOffset = { x: 0, y: 0 };
+
+function getCanvasCoords(e) {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / (rect.width || 1);
+  const scaleY = canvas.height / (rect.height || 1);
+  return {
+    x: (e.clientX - rect.left) * scaleX,
+    y: (e.clientY - rect.top) * scaleY,
+  };
+}
+
+canvas.addEventListener("pointerdown", (e) => {
+  if (appState !== "puzzle" || puzzle.solved) return;
+  const pos = getCanvasCoords(e);
+  const piece = getPieceUnderPoint(pos.x, pos.y);
+  if (piece) {
+    pointerActivePiece = piece;
+    pointerOffset.x = pos.x - piece.x;
+    pointerOffset.y = pos.y - piece.y;
+    try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
+  }
+});
+
+canvas.addEventListener("pointermove", (e) => {
+  if (!pointerActivePiece || appState !== "puzzle" || puzzle.solved) return;
+  const pos = getCanvasCoords(e);
+  pointerActivePiece.x = pos.x - pointerOffset.x;
+  pointerActivePiece.y = pos.y - pointerOffset.y;
+});
+
+const endPointerDrag = (e) => {
+  if (pointerActivePiece) {
+    snapPieceToSlot(pointerActivePiece);
+    pointerActivePiece = null;
+  }
+};
+canvas.addEventListener("pointerup", endPointerDrag);
+canvas.addEventListener("pointercancel", endPointerDrag);
+
+// ── Mobile Leaderboard Drawer Handlers ────────────────────────────────────────
+function openLeaderboardDrawer() {
+  sidebarDrawer.classList.add("open");
+  if (drawerBackdrop) drawerBackdrop.classList.add("open");
+}
+
+function closeLeaderboardDrawer() {
+  sidebarDrawer.classList.remove("open");
+  if (drawerBackdrop) drawerBackdrop.classList.remove("open");
+}
+
+function toggleLeaderboardDrawer() {
+  if (sidebarDrawer.classList.contains("open")) {
+    closeLeaderboardDrawer();
+  } else {
+    openLeaderboardDrawer();
+  }
+}
+
 if (mobileLbToggleBtn) {
-  mobileLbToggleBtn.addEventListener("click", () => {
-    sidebarDrawer.classList.toggle("open");
-  });
+  mobileLbToggleBtn.addEventListener("click", toggleLeaderboardDrawer);
 }
 if (closeDrawerBtn) {
-  closeDrawerBtn.addEventListener("click", () => {
-    sidebarDrawer.classList.remove("open");
-  });
+  closeDrawerBtn.addEventListener("click", closeLeaderboardDrawer);
+}
+if (drawerBackdrop) {
+  drawerBackdrop.addEventListener("click", closeLeaderboardDrawer);
 }
 
 if (solveResultViewLB) {
   solveResultViewLB.addEventListener("click", () => {
     solveResultModal.classList.add("hidden");
-    sidebarDrawer.classList.add("open");
+    openLeaderboardDrawer();
   });
 }
 if (solveResultClose) {
@@ -1821,7 +1918,7 @@ window.addEventListener("keydown", (e) => {
       handleRetakeCrop();
     }
   } else if (e.key === "Escape") {
-    sidebarDrawer.classList.remove("open");
+    closeLeaderboardDrawer();
     solveResultModal.classList.add("hidden");
     endedModal.classList.add("hidden");
     helpModal.classList.add("hidden");

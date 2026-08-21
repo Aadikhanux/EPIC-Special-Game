@@ -21,6 +21,17 @@ const LEADERBOARD_BROADCAST_THROTTLE_MS = 500;
 // ── Express App ───────────────────────────────────────────────────────────────
 const app = express();
 app.use(express.json({ limit: "2mb" }));
+
+// Route /admin directly to admin.html
+app.get("/admin", (req, res) => {
+  res.sendFile(path.join(__dirname, "admin.html"));
+});
+
+// Redirect legacy /admin.html to /admin
+app.get("/admin.html", (req, res) => {
+  res.redirect(301, "/admin");
+});
+
 app.use(express.static(path.join(__dirname), {
   maxAge: 0,
   setHeaders(res, filePath) {
@@ -611,7 +622,7 @@ server.listen(PORT, () => {
 ║     🎯 EPIC SPECIAL PHOTOBOOTH PUZZLE — TOURNAMENT SERVER   ║
 ╠══════════════════════════════════════════════════════════════╣
 ║  Player URL:   http://localhost:${PORT}                       ║
-║  Admin Panel:  http://localhost:${PORT}/admin.html             ║
+║  Admin Panel:  http://localhost:${PORT}/admin                  ║
 ║  Admin PIN:    ${ADMIN_PIN}                                       ║
 ║  Max Players:  500+                                          ║
 ╚══════════════════════════════════════════════════════════════╝
