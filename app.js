@@ -756,8 +756,8 @@ function resetPuzzleOnly() {
   countdown.active = false;
   drag.activeHand = null;
   drag.piece = null;
-  pointerDrag.active = false;
-  pointerDrag.piece = null;
+  handPinchStates.clear();
+  smoothedHands.length = 0;
   shatter.active = false;
   shatter.fragments = [];
   shatter.pendingCanvas = null;
@@ -1876,48 +1876,6 @@ if (playerNameInput) {
     if (e.key === "Enter") startGameBtn.click();
   });
 }
-
-// ── Mobile & Desktop Touch/Pointer Drag for Puzzle Pieces ─────────────────────
-let pointerActivePiece = null;
-let pointerOffset = { x: 0, y: 0 };
-
-function getCanvasCoords(e) {
-  const rect = canvas.getBoundingClientRect();
-  const scaleX = canvas.width / (rect.width || 1);
-  const scaleY = canvas.height / (rect.height || 1);
-  return {
-    x: (e.clientX - rect.left) * scaleX,
-    y: (e.clientY - rect.top) * scaleY,
-  };
-}
-
-canvas.addEventListener("pointerdown", (e) => {
-  if (appState !== "puzzle" || puzzle.solved) return;
-  const pos = getCanvasCoords(e);
-  const piece = getPieceUnderPoint(pos.x, pos.y);
-  if (piece) {
-    pointerActivePiece = piece;
-    pointerOffset.x = pos.x - piece.x;
-    pointerOffset.y = pos.y - piece.y;
-    try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
-  }
-});
-
-canvas.addEventListener("pointermove", (e) => {
-  if (!pointerActivePiece || appState !== "puzzle" || puzzle.solved) return;
-  const pos = getCanvasCoords(e);
-  pointerActivePiece.x = pos.x - pointerOffset.x;
-  pointerActivePiece.y = pos.y - pointerOffset.y;
-});
-
-const endPointerDrag = (e) => {
-  if (pointerActivePiece) {
-    snapPieceToSlot(pointerActivePiece);
-    pointerActivePiece = null;
-  }
-};
-canvas.addEventListener("pointerup", endPointerDrag);
-canvas.addEventListener("pointercancel", endPointerDrag);
 
 // ── Mobile Leaderboard Drawer Handlers ────────────────────────────────────────
 function openLeaderboardDrawer() {
