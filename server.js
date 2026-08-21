@@ -580,10 +580,8 @@ wss.on("connection", (ws, req) => {
   ws.on("close", () => {
     if (playerId && players.has(playerId)) {
       const player = players.get(playerId);
-      player.connected = false;
-      if (player.status === "waiting" || player.status === "playing") {
-        player.status = "disconnected";
-      }
+      console.log(`[PLAYER DISCONNECT] Removed ${player.name} (${playerId}) from game and leaderboard.`);
+      players.delete(playerId);
       scheduleLeaderboardBroadcast();
       broadcastTournamentState();
     }
