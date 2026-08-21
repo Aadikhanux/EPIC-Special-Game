@@ -71,28 +71,9 @@ function generatePlayerId() {
   return `P${String(nextPlayerId++).padStart(4, "0")}`;
 }
 
-function getUniquePlayerName(requestedName, excludePlayerId = null) {
+function getUniquePlayerName(requestedName) {
   let base = (requestedName || "Player").trim().slice(0, 24);
-  if (!base) base = "Player";
-
-  const existingNames = new Set();
-  for (const [id, p] of players) {
-    if (id !== excludePlayerId && p.name) {
-      existingNames.add(p.name.toLowerCase());
-    }
-  }
-
-  if (!existingNames.has(base.toLowerCase())) {
-    return base;
-  }
-
-  let counter = 2;
-  let candidate = `${base} ${counter}`;
-  while (existingNames.has(candidate.toLowerCase())) {
-    counter++;
-    candidate = `${base} ${counter}`;
-  }
-  return candidate;
+  return base || "Player";
 }
 
 function getLeaderboard() {
