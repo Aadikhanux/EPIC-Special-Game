@@ -338,27 +338,38 @@ function drawHandSkeleton(ctx, landmarks, isPinching = false) {
     ctx.stroke();
   });
 
-  // 3. Pinching connection line & target indicator
+  // 3. Pinching magnetic link & target indicator
   if (isPinching) {
     const thumb = points[4];
     const index = points[8];
     const midX = (thumb.x + index.x) / 2;
     const midY = (thumb.y + index.y) / 2;
 
+    // Glowing magnetic bridge between thumb and index
+    ctx.save();
+    ctx.shadowColor = "#f5c518";
+    ctx.shadowBlur = 12;
     ctx.beginPath();
     ctx.moveTo(thumb.x, thumb.y);
     ctx.lineTo(index.x, index.y);
     ctx.strokeStyle = "#ffd700";
-    ctx.lineWidth = 3;
+    ctx.lineWidth = 4;
+    ctx.stroke();
+
+    // Pulse pinch reticle
+    ctx.beginPath();
+    ctx.arc(midX, midY, 16, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(245, 197, 24, 0.25)";
+    ctx.fill();
+    ctx.strokeStyle = "#f5c518";
+    ctx.lineWidth = 2.5;
     ctx.stroke();
 
     ctx.beginPath();
-    ctx.arc(midX, midY, 14, 0, Math.PI * 2);
-    ctx.strokeStyle = "#f5c518";
-    ctx.lineWidth = 2;
-    ctx.setLineDash([3, 3]);
-    ctx.stroke();
-    ctx.setLineDash([]);
+    ctx.arc(midX, midY, 4, 0, Math.PI * 2);
+    ctx.fillStyle = "#ffffff";
+    ctx.fill();
+    ctx.restore();
   }
 
   ctx.restore();
@@ -936,9 +947,9 @@ async function initHandLandmarker(vision) {
         },
         runningMode: "video",
         numHands: 2,
-        minHandDetectionConfidence: 0.6,
-        minHandPresenceConfidence: 0.6,
-        minTrackingConfidence: 0.6,
+        minHandDetectionConfidence: 0.5,
+        minHandPresenceConfidence: 0.5,
+        minTrackingConfidence: 0.5,
       }),
       LOAD_TIMEOUT_MS,
       "Timed out loading HandLandmarker model."
@@ -956,13 +967,39 @@ async function initHandLandmarker(vision) {
       },
       runningMode: "video",
       numHands: 2,
-      minHandDetectionConfidence: 0.6,
-      minHandPresenceConfidence: 0.6,
-      minTrackingConfidence: 0.6,
+      minHandDetectionConfidence: 0.5,
+      minHandPresenceConfidence: 0.5,
+      minTrackingConfidence: 0.5,
     }),
     LOAD_TIMEOUT_MS,
     "Timed out loading HandLandmarker model on CPU."
   );
+}
+
+// ── Smooth Hand Tracking & Adaptive Pinch Engine ─────────────────────────────
+const PINCH_ENTER_RATIO = 0.44; // Scale-relative distance to initiate pinch
+const PINCH_EXIT_RATIO = 0.62;  // Scale-relative distance to release pinch
+const PINCH_MIN_ABSOLUTE = 0.048;
+const PINCH_MAX_ABSOLUTE = 0.12;
+
+const smoothedHands = []; // Array of smoothed landmark sets per hand
+const handPinchStates = new Map(); // handIndex -> boolean
+
+function smoothLandmarkSet(handIdx, rawLandmarks, alpha = 0.65) {
+  if (!smoothedHands[handIdx] || smoothedHands[handIdx].length !== rawLandmarks.length) {
+    smoothedHands[handIdx] = rawLandmarks.map((lm) => ({ x: lm.x, y: lm.y, z: lm.z }));
+    return smoothedHands[handIdx];
+  }
+
+  const prev = smoothedHands[handIdx];
+  for (let i = 0; i < rawLandmarks.length; i++) {
+    prev[i].x += (rawLandmarks[i].x - prev[i].x) * alpha;
+    prev[i].y += (rawLandmarks[i].y - prev[i].y) * alpha;
+    if (rawLandmarks[i].z !== undefined && prev[i].z !== undefined) {
+      prev[i].z += (rawLandmarks[i].z - prev[i].z) * alpha;
+    }
+  }
+  return prev;
 }
 
 function dist2D(a, b) {
@@ -971,8 +1008,45 @@ function dist2D(a, b) {
   return Math.sqrt(dx * dx + dy * dy);
 }
 
-function isPinching(landmarks) {
-  return dist2D(landmarks[LM.THUMB_TIP], landmarks[LM.INDEX_TIP]) < PINCH_THRESHOLD;
+function isPinching(landmarks, handIndex = 0) {
+  if (!landmarks || landmarks.length < 21) return false;
+
+  const thumbTip = landmarks[LM.THUMB_TIP];
+  const indexTip = landmarks[LM.INDEX_TIP];
+  const indexDIP = landmarks[7]; // Index distal joint (near tip)
+  const middleTip = landmarks[LM.MIDDLE_TIP];
+  const wrist = landmarks[LM.WRIST];
+  const middleMCP = landmarks[LM.MIDDLE_MCP];
+  const indexMCP = landmarks[LM.INDEX_MCP];
+
+  // Palm reference scale based on user's hand size (works at any distance)
+  const palmScale = Math.max(
+    dist2D(wrist, middleMCP),
+    dist2D(wrist, indexMCP),
+    0.06
+  );
+
+  // Measure minimum distance between thumb and index tip/DIP/middle
+  const dTip = dist2D(thumbTip, indexTip);
+  const dDIP = dist2D(thumbTip, indexDIP);
+  const dMiddle = dist2D(thumbTip, middleTip);
+
+  const effectiveDist = Math.min(dTip, dDIP * 0.95, dMiddle * 1.05);
+  const relativeRatio = effectiveDist / palmScale;
+
+  const currentlyPinching = handPinchStates.get(handIndex) || false;
+  let newPinchState;
+
+  if (currentlyPinching) {
+    // Hysteresis: must open beyond exit threshold to release
+    newPinchState = (relativeRatio < PINCH_EXIT_RATIO) || (effectiveDist < PINCH_MAX_ABSOLUTE);
+  } else {
+    // Must close within enter threshold to engage
+    newPinchState = (relativeRatio < PINCH_ENTER_RATIO) || (effectiveDist < PINCH_MIN_ABSOLUTE);
+  }
+
+  handPinchStates.set(handIndex, newPinchState);
+  return newPinchState;
 }
 
 function isFist(landmarks) {
@@ -1610,11 +1684,16 @@ function processFrame(nowMs) {
     }
 
     if (handsLandmarks.length >= 1) {
-      handsLandmarks.forEach((lm) => drawHandSkeleton(ctx, lm, isPinching(lm)));
-      const anyPinch = handsLandmarks.some((lm) => isPinching(lm));
-      if (anyPinch && smoothFaceBox.initialized) {
-        triggerManualSnap();
-      }
+      handsLandmarks.forEach((rawLm, hIdx) => {
+        const lm = smoothLandmarkSet(hIdx, rawLm);
+        const pinching = isPinching(lm, hIdx);
+        drawHandSkeleton(ctx, lm, pinching);
+        if (pinching && smoothFaceBox.initialized) {
+          triggerManualSnap();
+        }
+      });
+    } else {
+      handPinchStates.clear();
     }
   }
 
@@ -1633,28 +1712,31 @@ function processFrame(nowMs) {
     renderPuzzleBoard();
 
     if (handsLandmarks.length >= 1) {
-      handsLandmarks.forEach((lm) => {
+      handsLandmarks.forEach((rawLm, hIdx) => {
+        const lm = smoothLandmarkSet(hIdx, rawLm);
+        const pinching = isPinching(lm, hIdx);
+        const thumbPt = { x: (1 - lm[LM.THUMB_TIP].x) * canvas.width, y: lm[LM.THUMB_TIP].y * canvas.height };
         const indexPt = { x: (1 - lm[LM.INDEX_TIP].x) * canvas.width, y: lm[LM.INDEX_TIP].y * canvas.height };
-        const pinching = isPinching(lm);
+        const pinchCenter = { x: (thumbPt.x + indexPt.x) / 2, y: (thumbPt.y + indexPt.y) / 2 };
 
-        // Draw finger skeleton
+        // Draw finger skeleton with glow & smooth positioning
         drawHandSkeleton(ctx, lm, pinching);
 
         if (pinching && !drag.piece && !puzzle.solved) {
-          const target = getPieceUnderPoint(indexPt.x, indexPt.y);
+          const target = getPieceUnderPoint(pinchCenter.x, pinchCenter.y);
           if (target) {
             drag.piece = target;
           }
         }
 
         if (pinching && drag.piece && !puzzle.solved) {
-          drag.piece.x = indexPt.x - puzzle.tileW / 2;
-          drag.piece.y = indexPt.y - puzzle.tileH / 2;
+          drag.piece.x = pinchCenter.x - puzzle.tileW / 2;
+          drag.piece.y = pinchCenter.y - puzzle.tileH / 2;
 
           ctx.save();
           ctx.beginPath();
-          ctx.arc(indexPt.x, indexPt.y, 14, 0, Math.PI * 2);
-          ctx.fillStyle = "rgba(0, 229, 255, 0.9)";
+          ctx.arc(pinchCenter.x, pinchCenter.y, 14, 0, Math.PI * 2);
+          ctx.fillStyle = "rgba(245, 197, 24, 0.9)";
           ctx.fill();
           ctx.strokeStyle = "#ffffff";
           ctx.lineWidth = 2;
@@ -1675,6 +1757,12 @@ function processFrame(nowMs) {
           fistHoldCounter = 0;
         }
       });
+    } else {
+      if (drag.piece) {
+        snapPieceToSlot(drag.piece);
+        drag.piece = null;
+      }
+      handPinchStates.clear();
     }
   }
 
