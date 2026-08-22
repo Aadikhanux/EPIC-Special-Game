@@ -1,5 +1,5 @@
 # EPIC Special Photobooth Puzzle — Live Tournament 🏆
-
+#test 
 A real-time, 500+ player multiplayer AI face detection photobooth puzzle tournament engine. Built with MediaPipe Neural Vision, WebSockets, HTML5 Canvas 2D physics, and Web Audio API.
 
 ---
